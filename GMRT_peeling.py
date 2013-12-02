@@ -130,7 +130,7 @@ def peel(active_ms, modelimg, region, refAnt, rob, cleanenv=True):
 
     modelimg_reg = extrModel(modelimg, region, compl=False)
     ft(vis=active_ms, model=modelimg_reg, usescratch=True)
-    gaincal(vis=active_ms, caltable='cal/peel.Gp', solint='300s', refant=refAnt, minsnr=0, minblperant=10, calmode='p')
+    gaincal(vis=active_ms, caltable='cal/peel.Gp', solint='600s', refant=refAnt, minsnr=0, minblperant=10, calmode='p')
     gaincal(vis=active_ms, caltable='cal/peel.Ga', solint='inf', refant=refAnt, minsnr=0, minblperant=10, calmode='a')
     applycal(vis=active_ms, gaintable=['cal/peel.Ga','cal/peel.Gp'], calwt=False, flagbackup=False)
 
@@ -139,7 +139,7 @@ def peel(active_ms, modelimg, region, refAnt, rob, cleanenv=True):
     shape = findShape(modelimg_reg)
     clean(vis=active_ms, imagename='img/peel', gridmode='widefield', wprojplanes=256, mode='mfs',\
         niter=5000, gain=0.1, psfmode='clark', imagermode='csclean', interactive=False, imsize=[shape], cell=['1arcsec'],\
-        stokes='I', weighting='briggs', robust=rob-1, usescratch=True, phasecenter=epoch+' '+directionRA+' '+directionDEC,\
+        stokes='I', weighting='briggs', robust=rob, usescratch=True, phasecenter=epoch+' '+directionRA+' '+directionDEC,\
         mask=region)
     uvsub(vis=active_ms)
 

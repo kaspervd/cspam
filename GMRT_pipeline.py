@@ -215,7 +215,7 @@ def step_bandpass(active_ms, freq, minBL_for_cal):
             if step == 'postflag' or step == 'final': calmode='p'
             default('gaincal')
             gaincal(vis=active_ms, caltable='cal/'+str(i)+'init'+step+'.G', field=flux_cal,\
-            	selectdata=True, uvrange='>500lambda', scan=flux_cal_scan, spw='0:240~260',\
+            	selectdata=True, uvrange='>50m', scan=flux_cal_scan, spw='0:240~260',\
                 solint='int', combine='scan', refant=refAnt, minblperant=minBL_for_cal, minsnr=0, calmode=calmode)
     
             # smoothing solutions
@@ -239,7 +239,7 @@ def step_bandpass(active_ms, freq, minBL_for_cal):
                 minsnr=5.0
             default('bandpass')
             bandpass(vis=active_ms, caltable='cal/'+str(i)+step+'.B', field=flux_cal, selectdata=True,\
-            	uvrange='>1000lambda', scan=flux_cal_scan, solint='inf', combine='scan,field', refant=refAnt,\
+            	uvrange='>100m', scan=flux_cal_scan, solint='inf', combine='scan,field', refant=refAnt,\
             	minblperant=minBL_for_cal, minsnr=minsnr, solnorm=True, bandtype='B', gaintable=gaintables)
     
             # Plot bandpass
@@ -305,7 +305,8 @@ def step_calib(active_ms, freq, minBL_for_cal):
         sou = o['sou'][0]
         sou_scan = o['sou'][1]
         
-        for cycle in xrange(4):
+        n_cycles = 2
+        for cycle in xrange(n_cycles):
     
             print "INFO: starting CALIB cycle "+str(cycle)
     
@@ -322,7 +323,7 @@ def step_calib(active_ms, freq, minBL_for_cal):
                 minsnr=3.0
             default('gaincal')
             gaincal(vis=active_ms, caltable='cal/'+str(i)+'gain'+str(cycle)+'.Gp', field=gain_cal, selectdata=True,\
-            	uvrange='>1000lambda', scan=gain_cal_scan, solint='60s', refant=refAnt, minblperant=minBL_for_cal, minsnr=minsnr,\
+            	uvrange='>100m', scan=gain_cal_scan, solint='60s', refant=refAnt, minblperant=minBL_for_cal, minsnr=minsnr,\
             	calmode='p', gaintable=gaintables)
             
             default('smoothcal')
@@ -340,7 +341,7 @@ def step_calib(active_ms, freq, minBL_for_cal):
                 minsnr=3.0
             default('gaincal')
             gaincal(vis=active_ms, caltable='cal/'+str(i)+'gain'+str(cycle)+'.Ga', field=gain_cal,\
-            	selectdata=True, uvrange='>1000lambda', scan=gain_cal_scan, solint='inf', minsnr=minsnr,\
+            	selectdata=True, uvrange='>100m', scan=gain_cal_scan, solint='inf', minsnr=minsnr,\
             	refant=refAnt, minblperant=minBL_for_cal, calmode='a', gaintable=gaintables)
         
             plotGainCal('cal/'+str(i)+'gain'+str(cycle)+'.Ga', amp=True)
@@ -348,7 +349,7 @@ def step_calib(active_ms, freq, minBL_for_cal):
             # if gain and flux cal are the same the fluxscale cannot work
             # do it only in the last cycle, so the next clip can work, otherwise the uvsub subtract
             # a wrong model (amp==1) for the gain_cal if it had been rescaled
-            if gain_cal != flux_cal and cycle == 3:
+            if gain_cal != flux_cal and cycle == n_cycles-1:
                 # fluxscale
                 default('fluxscale')
                 myscale = fluxscale(vis=active_ms, caltable='cal/'+str(i)+'gain'+str(cycle)+'.Ga',\
@@ -372,7 +373,7 @@ def step_calib(active_ms, freq, minBL_for_cal):
             if cycle != 3:
 
                 default('applycal')
-                applycal(vis=active_ms, field=gain_cal, scan=gain_cal_scan, gaintable=gaintables, interp=['nearest'],\
+                applycal(vis=active_ms, field=gain_cal+','+flux_cal, scan=gain_cal_scan, gaintable=gaintables, interp=['nearest'],\
                 	calwt=False, flagbackup=False)
 
                 # flag statistics before flagging
@@ -450,7 +451,7 @@ def step_selfcal(active_ms, freq, minBL_for_cal, sources):
                 minsnr=3.0
             default('gaincal')
             gaincal(vis=active_ms, caltable='cal/'+str(sou)+'selfcal_gain'+str(cycle)+'.Gp', solint=solint, minsnr=minsnr,\
-            	selectdata=True, uvrange='>500lambda', refant=refAnt, minblperant=minBL_for_cal, gaintable=[], calmode='p')
+            	selectdata=True, uvrange='>50m', refant=refAnt, minblperant=minBL_for_cal, gaintable=[], calmode='p')
             
             # Gaincal - amp
             if cycle >= 3:        
@@ -462,7 +463,7 @@ def step_selfcal(active_ms, freq, minBL_for_cal, sources):
                         minsnr=3.0
                     default('gaincal')
                     gaincal(vis=active_ms, caltable='cal/'+str(sou)+'selfcal_gain'+str(cycle)+'.Ga',\
-                    	selectdata=True, uvrange='>500lambda', solint=solint, minsnr=minsnr, refant=refAnt,\
+                    	selectdata=True, uvrange='>50m', solint=solint, minsnr=minsnr, refant=refAnt,\
                     	minblperant=minBL_for_cal, gaintable=[], calmode='a')
      
             # plot gains
@@ -509,16 +510,15 @@ def step_selfcal(active_ms, freq, minBL_for_cal, sources):
         # Final cleaning
         default('clean')
         clean(vis=active_ms, imagename='img/'+str(sou)+'final', gridmode='widefield', wprojplanes=512,\
-        	mode='mfs', nterms=1, niter=10000, gain=0.1, threshold='0.1mJy', psfmode='clark', imagermode='csclean',\
-        	imsize=sou_size, cell=sou_res, stokes='I', weighting='briggs', robust=rob, usescratch=True, mask=sou_mask,\
-        	uvtaper=True, outertaper=[taper])
-    
+        	mode='mfs', nterms=1, niter=10000, gain=0.1, psfmode='clark', imagermode='csclean',\
+        	imsize=sou_size, cell=sou_res, stokes='I', weighting='briggs', robust=rob, usescratch=True, mask=sou_mask)
+           
         default('clean')
         clean(vis=active_ms, imagename='img/'+str(sou)+'final', gridmode='widefield', wprojplanes=512, mode='mfs',\
-        	nterms=1, niter=5000, gain=0.1, threshold='0.1mJy', psfmode='clark', imagermode='csclean', \
-           multiscale=[0,5,10,25,50,100,300], imsize=sou_size, cell=sou_res, stokes='I', weighting='briggs',\
+        	nterms=1, niter=5000, gain=0.1, psfmode='clark', imagermode='csclean', \
+            multiscale=[0,5,10,25,50,100,300], imsize=sou_size, cell=sou_res, stokes='I', weighting='briggs',\
         	robust=rob, usescratch=True, mask=sou_mask)
-    
+
     # end of cycle on sources
   
     
@@ -547,7 +547,7 @@ def step_peeling(sou):
         default('clean')
         clean(vis=peeledms1, imagename='img/'+str(sou)+'peel'+str(i), gridmode='widefield', wprojplanes=256, mode='mfs',\
         	nterms=1, niter=5000, gain=0.1, threshold='0.1mJy', psfmode='clark', imagermode='csclean',\
-                multiscale=[0,5,10,25,50,100,300], imsize=sou_size, cell=sou_res, weighting='briggs', robust=rob,\
+            multiscale=[0,5,10,25,50,100,300], imsize=sou_size, cell=sou_res, weighting='briggs', robust=rob,\
         	usescratch=True, mask=sou_mask)
 
         modelforpeel = 'img/'+str(sou)+'peel'+str(i)+'.model'
@@ -600,17 +600,16 @@ def step_finalclean(active_ms, sou):
 
 # steps to execute
 active_ms = dataf.replace('FITS', 'MS')  # NOTE: do not commment this out!
-step_env()
-step_import(active_ms)
+#step_env()
+#step_import(active_ms)
 freq, minBL_for_cal, sources, n_chan = step_setvars(active_ms) # NOTE: do not commment this out!
-step_preflag(active_ms, freq)
-step_setjy(active_ms)
-step_bandpass(active_ms, freq, minBL_for_cal)
-step_calib(active_ms, freq, minBL_for_cal)
-step_selfcal(active_ms, freq, minBL_for_cal, sources)
+#step_preflag(active_ms, freq)
+#step_setjy(active_ms)
+#step_bandpass(active_ms, freq, minBL_for_cal)
+#step_calib(active_ms, freq, minBL_for_cal)
+#step_selfcal(active_ms, freq, minBL_for_cal, sources)
 execfile('/home/hslxrsrv3/stsf309/phd/obs/GMRT/GMRT_peeling.py')
 for sou in sources:
     active_ms = step_peeling(sou)
-    active_ms = 'target1.MS-peeled-peeled-peeled'
     step_subtract(active_ms, sou)
     step_finalclean(active_ms, sou)
