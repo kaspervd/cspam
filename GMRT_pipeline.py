@@ -116,7 +116,7 @@ def step_import(active_ms):
 #######################################
 # Pre-flag: remove first chan, quack, bad ant and bad time
     
-def step_preflag(active_ms, freq):
+def step_preflag(active_ms, freq, n_chan):
     print "### FIRST FLAGGING"
     
     # report initial statistics
@@ -124,13 +124,13 @@ def step_preflag(active_ms, freq):
     print "INFO: Initial flag percentage: " + str(statsflags['flagged']/statsflags['total']*100.) + "%"
     
     if n_chan == 512:
-        if freq == 6.29e8: spw='0:0~10,0:502~511' # 610 MHz
-        if freq == 3.06e8: spw='0:0~10,0:502~511' # 325 MHz
-        if freq == 2.53e8: spw='0:0~130,0:450~511' # 235 MHz +20 border
+        if freq > 600e6 and freq < 650e6: spw='0:0~10,0:502~511' # 610 MHz
+        if freq > 300e6 and freq < 350e6: spw='0:0~10,0:502~511' # 325 MHz
+        if freq > 200e6 and freq < 300e6: spw='0:0~130,0:450~511' # 235 MHz +20 border
     elif n_chan == 256:
-        if freq == 6.29e8: spw='0:0~5,0:251~255' # 610 MHz
-        if freq == 3.06e8: spw='0:0~5,0:251~255' # 325 MHz
-        if freq == 2.53e8: spw='0:0~65,0:225~255' # 235 MHz +20 border
+        if freq > 600e6 and freq < 650e6: spw='0:0~5,0:251~255' # 610 MHz
+        if freq > 300e6 and freq < 350e6: spw='0:0~5,0:251~255' # 325 MHz
+        if freq > 200e6 and freq < 300e6: spw='0:0~65,0:225~255' # 235 MHz +20 border
 
     default('flagdata')
     flagdata(vis=active_ms, mode='manualflag', spw=spw, flagbackup=False)
@@ -403,9 +403,9 @@ def step_calib(active_ms, freq, minBL_for_cal):
 def step_selfcal(active_ms, freq, minBL_for_cal, sources):    
     print "### SELFCAL"
 
-    if freq == 6.29e8: width = 16
-    if freq == 3.06e8: width = 16
-    if freq == 2.53e8: width = 8
+    if freq > 600e6 and freq < 650e6: width = 16
+    if freq > 300e6 and freq < 350e6: width = 16
+    if freq > 200e6 and freq < 300e6: width = 8
     # renormalize if chans were not 512
     width = width / (512/n_chan)
    
@@ -603,7 +603,7 @@ active_ms = dataf.replace('FITS', 'MS')  # NOTE: do not commment this out!
 #step_env()
 #step_import(active_ms)
 freq, minBL_for_cal, sources, n_chan = step_setvars(active_ms) # NOTE: do not commment this out!
-#step_preflag(active_ms, freq)
+#step_preflag(active_ms, freq, n_chan)
 #step_setjy(active_ms)
 #step_bandpass(active_ms, freq, minBL_for_cal)
 #step_calib(active_ms, freq, minBL_for_cal)
