@@ -24,7 +24,7 @@
 #sou_size = [4096]
 # source to peel as a list of CASA regions for every target
 #sourcestopeel={'1':['sourcetopeel1.crtf','sourcetopeel2.crtf','sourcetopeel3.crtf']}
-# source to subtract as a CASA region
+# source to subtract as a CASA region, if region is '' then subtract all high-res sources
 #sourcestosub={'1':'sourcetosub.crtf'}
 # robust
 #rob=0.5
@@ -570,11 +570,9 @@ def step_subtract(active_ms, sou):
         selectdata=True, uvrange='>4klambda')
 
     # subtract the point sources using the region
-    #subtract(active_ms, 'img/'+str(sou)+'hires.model', sourcestosub[sou])
-    # subtract everything
-    ft(vis=active_ms, model='img/'+str(sou)+'hires.model', usescratch=True)
-    default('uvsub')
-    uvsub(vis=active_ms)
+    subtract(active_ms, 'img/'+str(sou)+'hires.model', sourcestosub[sou], wprojplanes=512)
+    # subtract everything (no region given)
+    #subtract(active_ms, 'img/'+str(sou)+'hires.model', wprojplanes=512)
 
 
 #######################################
@@ -611,5 +609,5 @@ freq, minBL_for_cal, sources, n_chan = step_setvars(active_ms) # NOTE: do not co
 execfile('/home/hslxrsrv3/stsf309/phd/obs/GMRT/GMRT_peeling.py')
 for sou in sources:
     active_ms = step_peeling(sou)
-    step_subtract(active_ms, sou)
-    step_finalclean(active_ms, sou)
+#    step_subtract(active_ms, sou)
+#    step_finalclean(active_ms, sou)
