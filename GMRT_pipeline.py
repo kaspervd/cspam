@@ -404,10 +404,10 @@ def step_selfcal(active_ms, freq, minBL_for_cal, sources):
     print "### SELFCAL"
 
     if freq > 600e6 and freq < 650e6: width = 16
-    if freq > 300e6 and freq < 350e6: width = 16
+    if freq > 300e6 and freq < 350e6: width = 8
     if freq > 200e6 and freq < 300e6: width = 8
-    # renormalize if chans were not 512
-    width = width / (512/n_chan)
+    # renormalize if chans were not 512, force int to prevent bug in split() if width is a numpy.int64
+    width = int(width / (512/n_chan))
    
     for sou in sources:
  
@@ -540,12 +540,12 @@ def step_peeling(sou):
         peeledms1 = peel(active_ms, modelforpeel, sourcetopeel, refAnt, rob, cleanenv=True)
     
         default('clean')
-        clean(vis=peeledms1, imagename='img/'+str(sou)+'peel'+str(i), gridmode='widefield', wprojplanes=256,\
+        clean(vis=peeledms1, imagename='img/'+str(sou)+'peel'+str(i), gridmode='widefield', wprojplanes=512,\
         	mode='mfs', nterms=1, niter=10000, gain=0.1, threshold='0.1mJy', psfmode='clark', imagermode='csclean',\
         	imsize=sou_size, cell=sou_res, weighting='briggs', robust=rob, usescratch=True, mask=sou_mask)
         
         default('clean')
-        clean(vis=peeledms1, imagename='img/'+str(sou)+'peel'+str(i), gridmode='widefield', wprojplanes=256, mode='mfs',\
+        clean(vis=peeledms1, imagename='img/'+str(sou)+'peel'+str(i), gridmode='widefield', wprojplanes=512, mode='mfs',\
         	nterms=1, niter=5000, gain=0.1, threshold='0.1mJy', psfmode='clark', imagermode='csclean',\
             multiscale=[0,5,10,25,50,100,300], imsize=sou_size, cell=sou_res, weighting='briggs', robust=rob,\
         	usescratch=True, mask=sou_mask)
@@ -605,7 +605,7 @@ freq, minBL_for_cal, sources, n_chan = step_setvars(active_ms) # NOTE: do not co
 #step_setjy(active_ms)
 #step_bandpass(active_ms, freq, minBL_for_cal)
 #step_calib(active_ms, freq, minBL_for_cal)
-#step_selfcal(active_ms, freq, minBL_for_cal, sources)
+step_selfcal(active_ms, freq, minBL_for_cal, sources)
 execfile('/home/hslxrsrv3/stsf309/phd/obs/GMRT/GMRT_peeling.py')
 for sou in sources:
     active_ms = step_peeling(sou)
