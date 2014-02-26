@@ -17,6 +17,9 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
+import os
+import logging
+
 def cspam_step_dataprep(MSs, conf):
     """
     Data preparation step
@@ -24,53 +27,57 @@ def cspam_step_dataprep(MSs, conf):
 
     logging.info('### STARTING DATA PREPARATION STEP')
 
-    for i, MS in enumerate(MSs):
+    for MS in MSs:
+        logging.info('# WORKING ON '+MS.file_name)
 
         # setting environment
-        if os.path.exists('img/ms'+str(i)):
-            logging.warning('Cleaning ./img/ms'+str(i)+'/ directory')
-            os.system('rm -r img/ms'+str(i))
-        os.makedirs('img/ms'+str(i))
-        if os.path.exists('cal/ms'+str(i)):
-            logging.warning('Cleaning ./cal/ms'+str(i)+'/ directory')
-            os.system('rm -r cal/ms'+str(i))
-        os.makedirs('cal/ms'+str(i))
-        if os.path.exists('plots/ms'+str(i)):
-            logging.warning('Cleaning ./plots/ms'+str(i)+'/ directory')
-            os.system('rm -r plots/ms'+str(i))
-        os.makedirs('plots/ms'+str(i))
+        if os.path.exists(MS.dir_img):
+            logging.warning('Cleaning '+MS.dir_img+' directory')
+            os.system('rm -r '+MS.dir_img)
+        os.makedirs(MS.dir_img)
+        if os.path.exists(MS.dir_cal):
+            logging.warning('Cleaning '+MS.dir_cal+' directory')
+            os.system('rm -r '+MS.dir_cal)
+        os.makedirs(MS.dir_cal)
+        if os.path.exists(MS.dir_plot):
+            logging.warning('Cleaning '+MS.dir_plot+' directory')
+            os.system('rm -r '+MS.dir_plot)
+        os.makedirs(MS.dir_plot)
 
         # create listobs.txt for references
         default('listobs')
-        if not os.path.isfile('listobs-ms'+str(i)+'.txt'):
-            listobs(vis=MS.file_name, verbose=True, listfile='listobs-ms'+str(i)+'.txt')
+        if not os.path.isfile(MS.file_name+'-listobs.txt'):
+            listobs(vis=MS.file_name, verbose=True, listfile=MS.file_name+'-listobs.txt')
 
         # plot ants
         default('plotants')
-        plotants(vis=MS.file_name, figfile='plots/ms'+str(i)+'/plotants.png')
+        plotants(vis=MS.file_name, figfile=MS.dir_plot+'plotants.png')
 
         # plot elevation
         default('plotms')
         plotms(vis=MS.file_name, xaxis='time', yaxis='elevation', selectdata=True, antenna='0&1;2&3',\
-            spw='0:31', coloraxis='field', plotfile='plots/ms'+str(i)+'/el_vs_time.png', overwrite=True)
+            spw='0:31', coloraxis='field', plotfile=MS.dir_plot+'el_vs_time.png', overwrite=True)
 
         # report initial statistics
-        statsflags = getStatsflag(MS.file_name)
-        logging.info("Initial flag percentage: " + str(statsflags['flagged']/statsflags['total']*100.) + "%")
+        stats_flag(MS.file_name)
+
+        # Hanning smoothing
+        if MS.telescope == 'EVLA':
+            pass
 
         # Flag bad channel for GMRT
-        if MS.telescope == 'GMRT':
-            if MS.nchan == 512:
-                if freq > 600e6 and freq < 650e6: spw='0:0~10,0:502~511' # 610 MHz
-                if freq > 300e6 and freq < 350e6: spw='0:0~10,0:502~511' # 325 MHz
-                if freq > 200e6 and freq < 300e6: spw='0:0~130,0:450~511' # 235 MHz +20 border
-            elif MS.nchan == 256:
-                if freq > 600e6 and freq < 650e6: spw='0:0~5,0:251~255' # 610 MHz
-                if freq > 300e6 and freq < 350e6: spw='0:0~5,0:251~255' # 325 MHz
-                if freq > 200e6 and freq < 300e6: spw='0:0~65,0:225~255' # 235 MHz +20 border
+        #if MS.telescope == 'GMRT':
+        #    if MS.nchan == 512:
+        #        if freq > 600e6 and freq < 650e6: spw='0:0~10,0:502~511' # 610 MHz
+        #        if freq > 300e6 and freq < 350e6: spw='0:0~10,0:502~511' # 325 MHz
+        #        if freq > 200e6 and freq < 300e6: spw='0:0~130,0:450~511' # 235 MHz +20 border
+        #    elif MS.nchan == 256:
+        #        if freq > 600e6 and freq < 650e6: spw='0:0~5,0:251~255' # 610 MHz
+        #        if freq > 300e6 and freq < 350e6: spw='0:0~5,0:251~255' # 325 MHz
+        #        if freq > 200e6 and freq < 300e6: spw='0:0~65,0:225~255' # 235 MHz +20 border
 
-            default('flagdata')
-            flagdata(vis=MS.file_name, mode='manualflag', spw=spw, flagbackup=False)
+        #    default('flagdata')
+        #    flagdata(vis=MS.file_name, mode='manualflag', spw=spw, flagbackup=False)
 
         if MS.flag != {}:
             for badant in MS.flag:
@@ -89,8 +96,7 @@ def cspam_step_dataprep(MSs, conf):
             correlation='ABS_ALL', action='apply', flagbackup=False)
 
         # flag statistics after pre-flag
-        statsflags = getStatsflag(MS.file_name)
-        logging.info("After initial-flagging flag percentage: " + str(statsflags['flagged']/statsflags['total']*100.) + "%")
+        stats_flag(MS.file_name)
 
         # save flag status
         default('flagmanager')

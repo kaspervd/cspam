@@ -35,7 +35,7 @@ def get_conf(config_file='cspam.config'):
         logging.critical('Configuration file '+config_file+' not found.')
         sys.exit(1)
     
-    confP = ConfigParser.ConfigParser({'flag': ''})
+    confP = ConfigParser.ConfigParser({'flag': '','cal_scans':'','tgt_scans':''})
     confP.read(config_file)
 
     conf = {}
@@ -50,6 +50,8 @@ def get_conf(config_file='cspam.config'):
         conf[MS] = {}
         conf[MS]['file_name'] = conf['data_dir']+'/'+MS
         conf[MS]['flag'] = confP.get(MS, 'flag')
+        conf[MS]['cal_scans'] = confP.get(MS, 'cal_scans').replace(' ','').split(',')
+        conf[MS]['tgt_scans'] = confP.get(MS, 'tgt_scans').replace(' ','').split(',')
    
     return conf
 
@@ -59,17 +61,16 @@ print "Starting CSPAM version: "+_version.__version__
 conf = get_conf()
 print conf
 
+execfile(conf['prog_dir']+'/cspam_lib.py')
+
 # set logging level
 if conf['debug'] == 2: _logging.setLevel('debug')
 if conf['debug'] == 0: _logging.setLevel('warning')
 
-execfile(conf['prog_dir']+'/cspam_lib.py')
-
 # creating the list of MSs and setting some specific values (as flags)
 MSs = []
 for MS in conf['MSs']:
-    MSs.append( MSobj(conf[MS]['file_name']) )
-    MSs[-1].set_flag(conf[MS]['flag'])
+    MSs.append( MSobj(conf[MS]) )
 
 # Sequence of macro steps
 if 'dataprep' in conf['steps']:
