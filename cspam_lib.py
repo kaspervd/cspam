@@ -30,19 +30,22 @@ class MSobj():
         self.dir_img = self.file_name.replace('.MS','')+'-img/'
         self.dir_cal = self.file_name.replace('.MS','')+'-cal/'
         self.dir_plot = self.file_name.replace('.MS','')+'-plot/'
+        self.minBL_for_cal = self.get_minBL_for_cal()
+        self.nchan = self.get_nchan()
         self.freq = self.get_freq()
         self.telescope = self.get_telescope()
         assert self.telescope == 'GMRT' or self.telescope == 'EVLA'
         self.band = self.get_band()
-        self.nchan = self.get_nchan()
-        self.minBL_for_cal = self.get_minBL_for_cal()
+        self.spw = conf['spw']
+        central_nchan = self.nchan*conf['central_chan_percentage']/100.
+        self.central_chans = str(int(round(self.nchan/2.-central_nchan/2.))) + '~' + str(int(round(self.nchan/2.+central_nchan/2.)))
 
         self.set_flag(conf['flag'])
-        self.set_cal_scans(conf['cal_scans'])
-        self.set_tgt_scans(conf['tgt_scans'])
+        self.set_cal_scan_ids(conf['cal_scans'])
+        self.set_tgt_scan_ids(conf['tgt_scans'])
         
-        if self.telescope == 'GMRT': uvrange = '>1000m'
-        if self.telescope == 'EVLA': uvrange = ''
+        if self.telescope == 'GMRT': self.uvrange = '>1000m'
+        if self.telescope == 'EVLA': self.uvrange = '?' # TODO
 
     def get_nchan(self):
         """
@@ -60,7 +63,6 @@ class MSobj():
         tb.open(self.file_name+'/OBSERVATION')
         telescope = tb.getcol('TELESCOPE_NAME')[0]
         tb.close()
-
         return telescope
 
     def get_band(self):
@@ -116,7 +118,7 @@ class MSobj():
             
         self.flag = flag
 
-    def set_cal_scans(self, cal_scans=['']):
+    def set_cal_scan_ids(self, user_cal_scan_ids=['']):
         """
         Save the calibrator scans in a list
         If empy list given, then check for coords
@@ -148,33 +150,41 @@ class MSobj():
                 'type': 'direction'}
         }
         
-        ms.open(self.file_name)
-        if cal_scans == ['']:
-            cal_scans = []
-            for cal_scan, cal_scan_info in ms.getscansummary().iteritems():
-                field_id = cal_scan_info['0']['FieldId']
-                print "checking "+str(cal_scan)
-                dir = ms.getfielddirmeas(fieldid=field_id)
-                # if distance with known cal is < than 60" then add it
-                for known_cal, known_cal_dir in known_cals.iteritems():
-                    if au.angularSeparationOfDirectionsArcsec(dir, known_cal_dir) <= 60:
-                        logging.info('Found '+known_cal+' in scan: '+cal_scan)
-                        cal_scans.append(cal_scan)
-                        # update field name for SetJy
-                        tb.open( '%s/FIELD' % self.file_name, nomodify=False)
-                        tb.putcell('NAME', int(field_id), known_cal)
-                        source_id = tb.getcell('SOURCE_ID', int(field_id))
-                        tb.close()
-                        tb.open( '%s/SOURCE' % self.file_name, nomodify=False)
-                        tb.putcell('NAME', source_id, known_cal)
-                        tb.close()
-            self.cal_scans = cal_scans
-        else:
-            self.cal_scans = cal_scans
+        if user_cal_scan_ids == ['']: user_cal_scan_ids = ms.getscansummary().keys()
+
+        cal_scan_ids = []
+        cal_field_ids = []
+        for cal_scan_id in user_cal_scan_ids:
+            cal_field_id = self.get_field_id_from_scan_id(cal_scan_id)
+            ms.open(self.file_name)
+            dir = ms.getfielddirmeas(fieldid=int(cal_field_id))
+            # if distance with known cal is < than 60" then add it
+            for known_cal, known_cal_dir in known_cals.iteritems():
+                if  au.angularSeparationOfDirectionsArcsec(dir, known_cal_dir) <= 60:
+                    logging.info('Found '+known_cal+' in scan: '+cal_scan_id)
+                    cal_scan_ids.append(cal_scan_id)
+                    cal_field_ids.append(str(cal_field_id))
+
+                    # update field name for SetJy
+                    tb.open('%s/FIELD' % self.file_name, nomodify=False)
+                    tb.putcell('NAME', int(cal_field_id), known_cal)
+                    source_id = tb.getcell('SOURCE_ID', int(cal_field_id))
+                    tb.close()
+                    tb.open('%s/SOURCE' % self.file_name, nomodify=False)
+                    tb.putcell('NAME', source_id, known_cal)
+                    tb.close()
+                    
+                    break # cal found, useless to keep on iterating
+                     
         ms.close()
+        self.cal_scan_ids = cal_scan_ids
+        self.cal_field_ids = list(set(cal_field_ids))
+        if self.cal_scan_ids == []:
+            logging.critical('No calibrators found')
+            sys.exit(1)
 
 
-    def set_tgt_scans(self, tgt_scans=['']):
+    def set_tgt_scan_ids(self, tgt_scans=['']):
         """
         Set the target scans in a list
         If empty list given, then all scans are tgt scans
@@ -186,6 +196,33 @@ class MSobj():
             self.tgt_scans = ''
         else:
             self.tgt_scans = tgt_scans
+
+    def get_field_name_from_field_id(self, field):
+        """
+        Return: the source name associated with a given field id
+        """
+        ms.open(self.file_name)
+        field_name = ms.summary()['field_'+str(field)]['name']
+        ms.close()
+        return field_name
+ 
+    def get_field_name_from_scan_id(self, scan):
+        """
+        Return: the source name associated with a given scan id
+        """
+        ms.open(self.file_name)
+        field_name = ms.summary()['scan_'+str(scan)]['0']['FieldName']
+        ms.close()
+        return field_name
+
+    def get_field_id_from_scan_id(self, scan):
+        """
+        Return: the field id associated with a given scan id
+        """
+        ms.open(self.file_name)
+        field_id = ms.summary()['scan_'+str(scan)]['0']['FieldId']
+        ms.close()
+        return str(field_id)
         
 
 def stats_flag(ms):
@@ -204,59 +241,107 @@ def plot_cal_table(calt, MS, ctype=''):
     Do the standard plot of gain solutions
     """
     if ctype == '': ctype = calt.split('.')[-1]
-    assert ctype == 'Ga' or ctype == 'Ga' or ctype == 'Gap' or ctype == 'K'
+    assert ctype == 'Ga' or ctype == 'Gp' or ctype == 'Gap' or ctype == 'K' or \
+           ctype == 'Ba' or ctype == 'Bp' or ctype == 'Bap'
 
     nplots = len(MS.get_antenna_names())/3
 
-    def getMaxAmp(caltable):
+    def getMax(caltable, ctype):
         """
         Return maximum unflagged amp for plotting purposes
+        Type can be: amp or ph (in rad)
         """
         tb.open(caltable)
         cpar=tb.getcol('CPARAM')
-        flgs=tb.getcol('FLAG')
+        flags=tb.getcol('FLAG')
         tb.close()
-        amps=np.abs(cpar)
-        good=np.logical_not(flgs)
-        maxamp=np.max(amps[good])
-        return maxamp
+        if 'a' in ctype: val=np.abs(cpar)
+        if 'p' in ctype: val=np.arctan2(np.imag(cpar),np.real(cpar))
+        good=np.logical_not(flags)
+        maxval=np.max(val[good])
+        return maxval
 
-    if ctype == 'Ga' or ctype == 'Gap':
-        plotmax = getMaxAmp(calt)
-        for ii in range(nplots):
-            filename=MS.dir_plot+calt.split('/')[-1]+'_a'+str(ii)+'.png'
-            syscommand='rm -rf '+filename
-            os.system(syscommand)
-            antPlot=str(ii*3)+'~'+str(ii*3+2)
-            default('plotcal')
-            plotcal(caltable=calt,xaxis='time',yaxis='amp',antenna=antPlot,subplot=311,\
-                iteration='antenna',plotrange=[0,0,0,plotmax],plotsymbol='o-',plotcolor='red',\
-                markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
+    if 'G' in ctype:
+        if 'a' in ctype:
+            plotmax = getMax(calt, ctype)
+            for ii in range(nplots):
+                filename=MS.dir_plot+calt.split('/')[-1]+'_a'+str(ii)+'.png'
+                syscommand='rm -rf '+filename
+                os.system(syscommand)
+                antPlot=str(ii*3)+'~'+str(ii*3+2)
+                default('plotcal')
+                plotcal(caltable=calt,xaxis='time',yaxis='amp',antenna=antPlot,subplot=311,\
+                    iteration='antenna',plotrange=[0,0,0,plotmax],plotsymbol='o-',plotcolor='red',\
+                    markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
 
-    if ctype == 'Gp' or ctype == 'Gap':
-        for ii in range(nplots):
-            filename=MS.dir_plot+calt.split('/')[-1]+'_p'+str(ii)+'.png'
-            syscommand='rm -rf '+filename
-            os.system(syscommand)
-            antPlot=str(ii*3)+'~'+str(ii*3+2)
-            default('plotcal')
-            plotcal(caltable=calt,xaxis='time',yaxis='phase',antenna=antPlot,subplot=311,\
-                overplot=False,clearpanel='Auto',iteration='antenna',plotrange=[0,0,-180,180],\
-                plotsymbol='o-',plotcolor='blue',markersize=5.0,fontsize=10.0,showgui=False,\
-                figfile=filename)
+        if 'p' in ctype:
+            for ii in range(nplots):
+                filename=MS.dir_plot+calt.split('/')[-1]+'_p'+str(ii)+'.png'
+                syscommand='rm -rf '+filename
+                os.system(syscommand)
+                antPlot=str(ii*3)+'~'+str(ii*3+2)
+                default('plotcal')
+                plotcal(caltable=calt,xaxis='time',yaxis='phase',antenna=antPlot,subplot=311,\
+                    overplot=False,clearpanel='Auto',iteration='antenna',plotrange=[0,0,-180,180],\
+                    plotsymbol='o-',plotcolor='blue',markersize=5.0,fontsize=10.0,showgui=False,\
+                    figfile=filename)
 
     if ctype == 'K':
+        plotmax = getMax(calt, 'a')
         for ii in range(nplots):
             filename=MS.dir_plot+calt.split('/')[-1]+'_'+str(ii)+'.png'
             syscommand='rm -rf '+filename
             os.system(syscommand)
             antPlot=str(ii*3)+'~'+str(ii*3+2)
             default('plotcal')
-            plotcal(caltable=calt,xaxis='time',yaxis='amp',antenna=antPlot,subplot=311,\
-                iteration='antenna',plotrange=[0,0,0,plotmax],plotsymbol='o-',plotcolor='red',\
+            plotcal(caltable=calt,xaxis='time',yaxis='delay',antenna=antPlot,subplot=311,\
+                iteration='antenna',plotrange=[0,0,0,plotmax],plotsymbol='o-',plotcolor='green',\
                 markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
 
+    if 'B' in ctype:
+        if 'a' in ctype:
+            plotmaxa = getMax(calt, ctype)
+            for ii in range(nplots):
+                filename=MS.dir_plot+calt.split('/')[-1]+'_a'+str(ii)+'.png'
+                syscommand='rm -rf '+filename
+                os.system(syscommand)
+                antPlot=str(ii*3)+'~'+str(ii*3+2)
+                default('plotcal')
+                plotcal(caltable=calt,xaxis='freq',yaxis='amp',antenna=antPlot,subplot=311,\
+                    iteration='antenna',plotrange=[0,0,0,plotmaxa],showflags=False,plotsymbol='o',\
+                    plotcolor='blue',markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
 
+        if 'p' in ctype:
+            plotmaxp = getMax(calt, ctype)*180./pi
+            for ii in range(nplots):
+                filename=MS.dir_plot+calt.split('/')[-1]+'_p'+str(ii)+'.png'
+                syscommand='rm -rf '+filename
+                os.system(syscommand)
+                antPlot=str(ii*3)+'~'+str(ii*3+2)
+                default('plotcal')
+                plotcal(caltable=calt,xaxis='freq',yaxis='phase',antenna=antPlot,subplot=311,\
+                    iteration='antenna',plotrange=[0,0,-plotmaxp,plotmaxp],showflags=False,\
+                    plotsymbol='o',plotcolor='blue',markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
+ 
+
+def flag_low_Ba(calt, p = 5):
+    """
+    Flag from the given Ba table the channels below "p" percentage from the mean
+    """
+    tb.open(calt, nomodify=False)
+    cpar = np.abs(tb.getcol('CPARAM'))
+    flags = tb.getcol('FLAG')
+    flags_sum = np.sum(flags)
+    antennas = tb.getcol('ANTENNA1')
+    # cpar has shape pol:chan:ant
+    npol, nchan, nant = cpar.shape
+    for pol in xrange(npol):
+        for ant in xrange(nant):
+            bad_chans = np.where(cpar[pol,:,ant] < p/100.*max(cpar[pol,:,ant]))
+            flags[pol,bad_chans,ant] = 1
+    tb.putcol('FLAG', flags)
+    tb.close()
+    logging.info("Flagged channel below "+str(p)+"%: "+str((np.sum(flags)-flags_sum)/float(flags_sum)*100)+"%")
 
 
 # From the EVLA pipeline

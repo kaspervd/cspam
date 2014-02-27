@@ -52,6 +52,8 @@ def get_conf(config_file='cspam.config'):
         conf[MS]['flag'] = confP.get(MS, 'flag')
         conf[MS]['cal_scans'] = confP.get(MS, 'cal_scans').replace(' ','').split(',')
         conf[MS]['tgt_scans'] = confP.get(MS, 'tgt_scans').replace(' ','').split(',')
+        conf[MS]['spw'] = confP.get(MS, 'spw').replace(' ','')
+        conf[MS]['central_chan_percentage'] = confP.getint(MS, 'central_chan_percentage')
    
     return conf
 

@@ -19,6 +19,7 @@
 
 import os
 import logging
+import datetime
 
 def cspam_step_dataprep(MSs, conf):
     """
@@ -28,7 +29,7 @@ def cspam_step_dataprep(MSs, conf):
     logging.info('### STARTING DATA PREPARATION STEP')
 
     for MS in MSs:
-        logging.info('# WORKING ON '+MS.file_name)
+        logging.info('## WORKING ON '+MS.file_name)
 
         # setting environment
         if os.path.exists(MS.dir_img):
@@ -56,7 +57,7 @@ def cspam_step_dataprep(MSs, conf):
         # plot elevation
         default('plotms')
         plotms(vis=MS.file_name, xaxis='time', yaxis='elevation', selectdata=True, antenna='0&1;2&3',\
-            spw='0:31', coloraxis='field', plotfile=MS.dir_plot+'el_vs_time.png', overwrite=True)
+            spw='0:1', coloraxis='field', plotfile=MS.dir_plot+'el_vs_time.png', overwrite=True)
 
         # report initial statistics
         stats_flag(MS.file_name)
@@ -65,8 +66,11 @@ def cspam_step_dataprep(MSs, conf):
         if MS.telescope == 'EVLA':
             pass
 
-        # Flag bad channel for GMRT
-        #if MS.telescope == 'GMRT':
+        # Flag channel 0 for GMRT
+        if MS.telescope == 'GMRT':
+            default('flagdata')
+            flagdata(vis=MS.file_name, mode='manualflag', spw='*:0', flagbackup=False)
+
         #    if MS.nchan == 512:
         #        if freq > 600e6 and freq < 650e6: spw='0:0~10,0:502~511' # 610 MHz
         #        if freq > 300e6 and freq < 350e6: spw='0:0~10,0:502~511' # 325 MHz
@@ -81,7 +85,7 @@ def cspam_step_dataprep(MSs, conf):
 
         if MS.flag != {}:
             for badant in MS.flag:
-                print "* Flagging :", badant, " - time: ", MS.flag[badant]
+                logging.info("Flagging: "+str(badant)+" - time: "+str(MS.flag[badant]))
                 default('flagdata')
                 flagdata(vis=MS.file_name, mode='manualflag', antenna=badant,\
                     timerange=MS.flag[badant], flagbackup=False)
