@@ -36,10 +36,10 @@ def cspam_step_dataprep(MSs, conf):
             logging.warning('Cleaning '+MS.dir_img+' directory')
             os.system('rm -r '+MS.dir_img)
         os.makedirs(MS.dir_img)
-        if os.path.exists(MS.dir_cal):
-            logging.warning('Cleaning '+MS.dir_cal+' directory')
-            os.system('rm -r '+MS.dir_cal)
-        os.makedirs(MS.dir_cal)
+#        if os.path.exists(MS.dir_cal):
+#            logging.warning('Cleaning '+MS.dir_cal+' directory')
+#            os.system('rm -r '+MS.dir_cal)
+#        os.makedirs(MS.dir_cal)
         if os.path.exists(MS.dir_plot):
             logging.warning('Cleaning '+MS.dir_plot+' directory')
             os.system('rm -r '+MS.dir_plot)
@@ -64,12 +64,20 @@ def cspam_step_dataprep(MSs, conf):
 
         # Hanning smoothing
         if MS.telescope == 'EVLA':
-            pass
+            hanningsmooth(vis=MS.file_name, datacolumn='data')
+            flagcmd(vis=MS.file_name, inpmode='list',
+                inpfile=["mode='manual' autocorr=True",
+                        "mode='shadow'",
+                        "mode='quack' quackinterval=1 quackmode='beg'",
+                        "mode='clip' clipzeros=True correlation='ABS_ALL'"], action='apply')
 
-        # Flag channel 0 for GMRT
+        # Flag autocorr, channel 0, quack, zeros for GMRT
         if MS.telescope == 'GMRT':
-            default('flagdata')
-            flagdata(vis=MS.file_name, mode='manualflag', spw='*:0', flagbackup=False)
+            flagcmd(vis=MS.file_name, inpmode='list',
+                inpfile=["mode='manual' autocorr=True",
+                        "mode='manual', spw='*:0'",
+                        "mode='quack', quackinterval=1, quackmode='beg'",
+                        "mode='clip', clipzeros=True,correlation='ABS_ALL'"], action='apply')
 
         #    if MS.nchan == 512:
         #        if freq > 600e6 and freq < 650e6: spw='0:0~10,0:502~511' # 610 MHz
@@ -89,15 +97,6 @@ def cspam_step_dataprep(MSs, conf):
                 default('flagdata')
                 flagdata(vis=MS.file_name, mode='manualflag', antenna=badant,\
                     timerange=MS.flag[badant], flagbackup=False)
-
-        # quack
-        default('flagdata')
-        flagdata(vis=MS.file_name, mode='quack', quackinterval=1, quackmode='beg', action='apply', flagbackup=False)
-
-        # flag zeros
-        default('flagdata')
-        flagdata(vis=MS.file_name, mode='clip', clipzeros=True,\
-            correlation='ABS_ALL', action='apply', flagbackup=False)
 
         # flag statistics after pre-flag
         stats_flag(MS.file_name)

@@ -19,7 +19,6 @@
 
 import logging
 import numpy
-import casa
 
 class MSobj():
     """
@@ -28,7 +27,9 @@ class MSobj():
     def __init__(self, conf):
         self.file_name = conf['file_name']
         self.dir_img = self.file_name.replace('.MS','')+'-img/'
-        self.dir_cal = self.file_name.replace('.MS','')+'-cal/'
+        # annoying workaround to keep caltables in the same dir of MSs, so plotcal works
+        self.dir_cal = os.path.dirname(self.file_name) 
+        #self.dir_cal = self.file_name.replace('.MS','')+'-cal/'
         self.dir_plot = self.file_name.replace('.MS','')+'-plot/'
         self.minBL_for_cal = self.get_minBL_for_cal()
         self.nchan = self.get_nchan()
@@ -45,7 +46,7 @@ class MSobj():
         self.set_tgt_scan_ids(conf['tgt_scans'])
         
         if self.telescope == 'GMRT': self.uvrange = '>1000m'
-        if self.telescope == 'EVLA': self.uvrange = '?' # TODO
+        if self.telescope == 'EVLA': self.uvrange = ''
 
     def get_nchan(self):
         """
@@ -225,14 +226,24 @@ class MSobj():
         return str(field_id)
         
 
-def stats_flag(ms):
+def stats_flag(ms, spw='', field=''):
     """
     Print (and return) the falg statistics
     """
-    default('flagdata')
-    statsflags = flagdata(vis=ms, mode='summary', spwchan=False, spwcorr=False, basecnt=False, action='calculate', flagbackup=False, savepars=False, async=False)
-    clearstat()
-    logging.info("Flag percentage: " + str(statsflags['flagged']/statsflags['total']*100.) + "%")
+    af.open(ms)
+    af.selectdata(field=field, spw=spw)
+    agentSummary={'mode':'summary'}
+    af.parseagentparameters(agentSummary)
+    af.init()
+    summary = af.run()
+    af.done()
+    del af
+
+    #default('flagdata')
+    #statsflags = flagdata(vis=ms, mode='summary', spwchan=False, spwcorr=False, basecnt=False, action='calculate', flagbackup=False, savepars=False, async=False)
+    #clearstat()
+    array_flag = summary['report0']['array']['0']
+    logging.info("Flag percentage: " + str(array_flag['flagged']/array_flag['total']*100.) + "%")
     return statsflags
 
 
@@ -252,7 +263,8 @@ def plot_cal_table(calt, MS, ctype=''):
         Type can be: amp or ph (in rad)
         """
         tb.open(caltable)
-        cpar=tb.getcol('CPARAM')
+        if 'K' in ctype: cpar=tb.getcol('FPARAM')
+        else: cpar=tb.getcol('CPARAM')
         flags=tb.getcol('FLAG')
         tb.close()
         if 'a' in ctype: val=np.abs(cpar)
@@ -581,9 +593,9 @@ class RefAntHeuristics:
 
         names = tbLoc.getcol('NAME').tolist()
 
-        rNames = range(len(names))
-        for n in rNames:
-            names[n] = names[n].upper()
+#        rNames = range(len(names))
+#        for n in rNames:
+#            names[n] = names[n].upper()
 
         # Close the local instance of the table tool and delete it
 
@@ -780,9 +792,9 @@ class RefAntGeometry:
         # which seems to be different from the antenna names stored in
         # MSes.  Therefore, these names will be capitalized here.
 
-        rRow = range(len(info['name']))
-        for r in rRow:
-            info['name'][r] = info['name'][r].upper()
+#        rRow = range(len(info['name']))
+#        for r in rRow:
+#            info['name'][r] = info['name'][r].upper()
 
         # Return the antenna information
 
@@ -1215,27 +1227,36 @@ class RefAntFlagging:
 
     def _get_good(self):
 
+        af.open(self.vis)
+        af.selectdata(field=self.field, spw=self.spw, intent=self.intent)
+        agentSummary={'mode':'summary'}
+        af.parseagentparameters(agentSummary)
+        af.init()                        
+        summary = af.run()                                                                                                  
+        af.done() 
+        del af
+
         # Create the local version of the flag tool and open the MS
 
-        fgLoc = casac.flagger()
-        fgLoc.open(self.vis)
+        #fgLoc = casac.flagger()
+        #fgLoc.open(self.vis)
 
         # Get the flag statistics from the MS
 
-        fgLoc.setdata(field=self.field, spw=self.spw,
-                      intent=self.intent)
-        fgLoc.setflagsummary()
+        #fgLoc.setdata(field=self.field, spw=self.spw,
+        #              intent=self.intent)
+        #fgLoc.setflagsummary()
 
-        d = fgLoc.run()
+        #d = fgLoc.run()
 
         # Delete the local version of the flag tool
 
-        del fgLoc
+        #del fgLoc
 
         # Calculate the number of good data for each antenna and return
         # them
 
-        antenna = d['antenna']
+        antenna = summary['report0']['antenna']
         good = dict()
 
         for a in antenna.keys():

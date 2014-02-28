@@ -22,3 +22,19 @@ def cspam_step_selfcal(conf):
     Selfcal step
     """
 
+
+                    # reload only static initial flags
+                    default('flagmanager')
+                    flagmanager(vis=MS.file_name, mode='restore', versionname='AfterInitialFlagging')
+
+                    # run aoflagger
+                    syscommand = '~/opt/src/aoflagger/build/src/aoflagger -column CORRECTED_DATA -strategy ~/phd/obs/GMRT/rfi_GMRT610.rfis -indirect-read ' + MS.file_name
+                    os.system(syscommand)
+
+                    # flag statistics after flagging
+                    stats_flag(MS.file_name)
+
+                    default('flagmanager')
+                    flagmanager(vis=MS.file_name, mode='save', versionname='AfterDeepFlagging', comment=str(datetime.datetime.now()))
+                    logging.info("Saved flags in AfterDeepFlagging")
+

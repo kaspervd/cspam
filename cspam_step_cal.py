@@ -50,6 +50,13 @@ def cspam_step_cal(MSs, conf):
         logging.info("# STARTING BANDPASS CALIBRATION")
         for cal_scan_id in MS.cal_scan_ids:
             for step in ['preflag','postflag','final']:
+                
+                # Run an flagger after the first cycle to remove most obvious RFI
+                if step == 'preflag':
+                    default('flagcmd')
+                    flagcmd(vis=MS.file_name, inpmode='list',
+                            inpfile=["mode='tfcrop' maxnpieces=5 timecutoff=4.0 freqcutoff=3.0 datacolumn='data'",
+                            "mode='rflag' timedevscale=5.0 freqdevscale=5.0 datacolumn='data'"], action='apply')
 
                 gaintables = []
                 refAntObj = RefAntHeuristics(vis=MS.file_name, field=MS.get_field_id_from_scan_id(cal_scan_id), geometry=True, flagging=True)
@@ -89,40 +96,33 @@ def cspam_step_cal(MSs, conf):
                 # Plot bandpass
                 plot_cal_table(MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.Bap', MS=MS)
                 
-                # Apply cal
+                # Apply Bap to ALL SCANS #TODO
                 default('applycal')
-                applycal(vis=MS.file_name, selectdata=True, scan=cal_scan_id,\
+                applycal(vis=MS.file_name, selectdata=True, scan='',\
                     gaintable=[MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.Bap'], calwt=False, flagbackup=False)
              
-                # Run an rflag after the first cycle
-                # to remove most obvious RFI
+                # Run a flagger after the first cycle to remove most obvious RFI
                 if step == 'preflag':
-                    default('flagdata')
-                    flagdata(vis=MS.file_name, mode='rflag', scan=cal_scan_id,\
-                        ntime='scan', combinescans=False, datacolumn='corrected', winsize=3,\
-                        timedevscale=4.0, freqdevscale=4.0, action='apply', flagbackup=False)
-                    default('flagdata')
-                    flagdata(vis=MS.file_name, mode='extend', scan=cal_scan_id, flagbackup=False)
-    
-                       
-                # Flag with aoflagger at the second round,
-                # then redo the bandpass for the third and last time
+                    default('flagcmd')
+                    flagcmd(vis=MS.file_name, inpmode='list',
+                            inpfile=["mode='tfcrop' maxnpieces=5 timecutoff=4.0 freqcutoff=3.0 datacolumn='corrected'",
+                            "mode='rflag' timedevscale= 4.0 freqdevscale=3.0 datacolumn='corrected'",
+                            "mode='extend' growtime=50.0 growfreq=50.0"], action='apply')
+
+                # Run a flagger after the first B cycle to remove all others RFI
                 if step == 'postflag':
-                        
-                    # reload only static initial flags
-                    default('flagmanager')
-                    flagmanager(vis=MS.file_name, mode='restore', versionname='AfterInitialFlagging')
-                        
-                    # run aoflagger
-                    syscommand = '~/opt/src/aoflagger/build/src/aoflagger -column CORRECTED_DATA -strategy ~/phd/obs/GMRT/rfi_GMRT610.rfis -indirect-read ' + MS.file_name
-                    os.system(syscommand)
-                        
-                    # flag statistics after flagging
-                    stats_flag(MS.file_name)
-                        
-                    default('flagmanager')
-                    flagmanager(vis=MS.file_name, mode='save', versionname='AfterDeepFlagging', comment=str(datetime.datetime.now()))
-                    logging.info("Saved flags in AfterDeepFlagging")
+                    default('flagcmd')
+                    flagcmd(vis=MS.file_name, inpmode='list',
+                            inpfile=["mode='tfcrop' maxnpieces=5 timecutoff=4.0 freqcutoff=3.0 datacolumn='corrected'",
+                            "mode='rflag' timedevscale=3.0 freqdevscale=2.8 datacolumn='corrected'",
+                            "mode='extend' growtime=50.0 growfreq=50.0"], action='apply')
+
+                # flag statistics after flagging
+                stats_flag(MS.file_name)
+                # save flags
+                default('flagmanager')
+                flagmanager(vis=MS.file_name, mode='save', versionname='After_flagging_'+step, comment=str(datetime.datetime.now()))
+                logging.info("Saved flags in After_flagging_"+strp)
         
             # end of 3 bandpass cycles
      
@@ -131,7 +131,7 @@ def cspam_step_cal(MSs, conf):
         for cal_scan_id in MS.cal_scan_ids:
             # start with the B table associated
             gaintables = [MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.Bap']
-            for step in xrange(3):
+            for step in ['1','2','3']:
                 logging.info("CYCLE "+str(step))
 
                 refAntObj = RefAntHeuristics(vis=MS.file_name, field=MS.get_field_id_from_scan_id(cal_scan_id), geometry=True, flagging=True)
