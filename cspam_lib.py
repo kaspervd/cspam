@@ -581,19 +581,9 @@ class RefAntHeuristics:
 
     def _get_names(self):
 
-        # Create the local instance of the table tool and open the MS
-
         tb.open(self.vis + '/ANTENNA')
-
-        # Get the antenna names and capitalize them (unfortunately,
-        # some CASA tools capitalize them and others don't)
-
         names = tb.getcol('NAME').tolist()
-
-        # Close the local instance of the table tool and delete it
-
         tb.close()
-
 
         return names
 
