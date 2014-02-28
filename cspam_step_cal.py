@@ -58,6 +58,8 @@ def cspam_step_cal(MSs, conf):
                             inpfile=["mode='tfcrop' maxnpieces=5 timecutoff=4.0 freqcutoff=3.0 datacolumn='data'",
                             "mode='rflag' timedevscale=5.0 freqdevscale=5.0 datacolumn='data'"], action='apply')
 
+                stats_flag(MS.file_name)
+
                 gaintables = []
                 refAntObj = RefAntHeuristics(vis=MS.file_name, field=MS.get_field_id_from_scan_id(cal_scan_id), geometry=True, flagging=True)
                 refAnt = refAntObj.calculate()[0]
@@ -122,7 +124,7 @@ def cspam_step_cal(MSs, conf):
                 # save flags
                 default('flagmanager')
                 flagmanager(vis=MS.file_name, mode='save', versionname='After_flagging_'+step, comment=str(datetime.datetime.now()))
-                logging.info("Saved flags in After_flagging_"+strp)
+                logging.info("Saved flags in After_flagging_"+step)
         
             # end of 3 bandpass cycles
      

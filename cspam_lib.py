@@ -19,6 +19,7 @@
 
 import logging
 import numpy
+import casa
 
 class MSobj():
     """
@@ -230,6 +231,7 @@ def stats_flag(ms, spw='', field=''):
     """
     Print (and return) the falg statistics
     """
+    from casa import agentflagger as af
     af.open(ms)
     af.selectdata(field=field, spw=spw)
     agentSummary={'mode':'summary'}
@@ -239,12 +241,9 @@ def stats_flag(ms, spw='', field=''):
     af.done()
     del af
 
-    #default('flagdata')
-    #statsflags = flagdata(vis=ms, mode='summary', spwchan=False, spwcorr=False, basecnt=False, action='calculate', flagbackup=False, savepars=False, async=False)
-    #clearstat()
     array_flag = summary['report0']['array']['0']
     logging.info("Flag percentage: " + str(array_flag['flagged']/array_flag['total']*100.) + "%")
-    return statsflags
+    return summary
 
 
 def plot_cal_table(calt, MS, ctype=''):
@@ -542,8 +541,7 @@ class RefAntHeuristics:
                 try:
                     score[n] += self.flagScore[n]
                 except KeyError, e:
-                    print 'WARNING: antenna ' + str(e) \
-                        + ', is completely flagged and missing'
+                    logging.warning('Antenna ' + str(e) + ', is completely flagged and missing')
 
         # Calculate the final score and return the list of ranked
         # reference antennas.  NB: The best antennas have the highest
@@ -585,24 +583,17 @@ class RefAntHeuristics:
 
         # Create the local instance of the table tool and open the MS
 
-        tbLoc = casac.table()
-        tbLoc.open(self.vis + '/ANTENNA')
+        tb.open(self.vis + '/ANTENNA')
 
         # Get the antenna names and capitalize them (unfortunately,
         # some CASA tools capitalize them and others don't)
 
-        names = tbLoc.getcol('NAME').tolist()
-
-#        rNames = range(len(names))
-#        for n in rNames:
-#            names[n] = names[n].upper()
+        names = tb.getcol('NAME').tolist()
 
         # Close the local instance of the table tool and delete it
 
-        tbLoc.close()
-        del tbLoc
+        tb.close()
 
-        # Return the antenna names
 
         return names
 
@@ -768,33 +759,18 @@ class RefAntGeometry:
 
     def _get_info(self):
 
-        # Create the local instance of the table tool and open it with
-        # the antenna subtable of the MS
-
-        tbLoc = casac.table()
-        tbLoc.open(self.vis + '/ANTENNA')
+        tb.open(self.vis + '/ANTENNA')
 
         # Get the antenna information from the antenna table
 
         info = dict()
 
-        info['position'] = tbLoc.getcol('POSITION')
-        info['flag_row'] = tbLoc.getcol('FLAG_ROW')
-        info['name'] = tbLoc.getcol('NAME')
-        info['position_keywords'] = tbLoc.getcolkeywords('POSITION')
+        info['position'] = tb.getcol('POSITION')
+        info['flag_row'] = tb.getcol('FLAG_ROW')
+        info['name'] = tb.getcol('NAME')
+        info['position_keywords'] = tb.getcolkeywords('POSITION')
 
-        # Close the table tool and delete the local instance
-
-        tbLoc.close()
-        del tbLoc
-
-        # The flag tool appears to return antenna names as upper case,
-        # which seems to be different from the antenna names stored in
-        # MSes.  Therefore, these names will be capitalized here.
-
-#        rRow = range(len(info['name']))
-#        for r in rRow:
-#            info['name'][r] = info['name'][r].upper()
+        tb.close()
 
         # Return the antenna information
 
@@ -829,11 +805,6 @@ class RefAntGeometry:
 
     def _get_measures(self, info):
 
-        # Create the local instances of the measures and quanta tools
-
-        meLoc = casac.measures()
-        qaLoc = casac.quanta()
-
         # Initialize the measures dictionary and the position and
         # position_keywords variables
 
@@ -850,23 +821,18 @@ class RefAntGeometry:
 
                 p = position[0, row]
                 pk = position_keywords['QuantumUnits'][0]
-                v0 = qaLoc.quantity(p, pk)
+                v0 = qa.quantity(p, pk)
 
                 p = position[1, row]
                 pk = position_keywords['QuantumUnits'][1]
-                v1 = qaLoc.quantity(p, pk)
+                v1 = qa.quantity(p, pk)
 
                 p = position[2, row]
                 pk = position_keywords['QuantumUnits'][2]
-                v2 = qaLoc.quantity(p, pk)
+                v2 = qa.quantity(p, pk)
 
-                measures[ant] = meLoc.position(rf=rf, v0=v0, v1=v1,
+                measures[ant] = me.position(rf=rf, v0=v0, v1=v1,
                         v2=v2)
-
-        # Delete the local instances of the measures and quanta tools
-
-        del qaLoc
-        del meLoc
 
         # Return the measures
 
@@ -902,10 +868,6 @@ class RefAntGeometry:
 
     def _get_latlongrad(self, info, measures):
 
-        # Create the local instance of the quanta tool
-
-        qaLoc = casac.quanta()
-
         # Get the radii, longitudes, and latitudes
 
         radii = dict()
@@ -916,25 +878,21 @@ class RefAntGeometry:
 
             value = measures[ant]['m2']['value']
             unit = measures[ant]['m2']['unit']
-            quantity = qaLoc.quantity(value, unit)
-            convert = qaLoc.convert(quantity, 'm')
-            radii[ant] = qaLoc.getvalue(convert)
+            quantity = qa.quantity(value, unit)
+            convert = qa.convert(quantity, 'm')
+            radii[ant] = qa.getvalue(convert)
 
             value = measures[ant]['m0']['value']
             unit = measures[ant]['m0']['unit']
-            quantity = qaLoc.quantity(value, unit)
-            convert = qaLoc.convert(quantity, 'rad')
-            longs[ant] = qaLoc.getvalue(convert)
+            quantity = qa.quantity(value, unit)
+            convert = qa.convert(quantity, 'rad')
+            longs[ant] = qa.getvalue(convert)
 
             value = measures[ant]['m1']['value']
             unit = measures[ant]['m1']['unit']
-            quantity = qaLoc.quantity(value, unit)
-            convert = qaLoc.convert(quantity, 'rad')
-            lats[ant] = qaLoc.getvalue(convert)
-
-        # Delete the local instance of the quanta tool
-
-        del qaLoc
+            quantity = qa.quantity(value, unit)
+            convert = qa.convert(quantity, 'rad')
+            lats[ant] = qa.getvalue(convert)
 
         # Return the tuple containing the radius, longitude, and
         # latitude python dictionaries
@@ -1227,6 +1185,7 @@ class RefAntFlagging:
 
     def _get_good(self):
 
+        from casa import agentflagger as af
         af.open(self.vis)
         af.selectdata(field=self.field, spw=self.spw, intent=self.intent)
         agentSummary={'mode':'summary'}
@@ -1235,23 +1194,6 @@ class RefAntFlagging:
         summary = af.run()                                                                                                  
         af.done() 
         del af
-
-        # Create the local version of the flag tool and open the MS
-
-        #fgLoc = casac.flagger()
-        #fgLoc.open(self.vis)
-
-        # Get the flag statistics from the MS
-
-        #fgLoc.setdata(field=self.field, spw=self.spw,
-        #              intent=self.intent)
-        #fgLoc.setflagsummary()
-
-        #d = fgLoc.run()
-
-        # Delete the local version of the flag tool
-
-        #del fgLoc
 
         # Calculate the number of good data for each antenna and return
         # them

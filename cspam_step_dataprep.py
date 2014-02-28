@@ -56,8 +56,9 @@ def cspam_step_dataprep(MSs, conf):
 
         # plot elevation
         default('plotms')
-        plotms(vis=MS.file_name, xaxis='time', yaxis='elevation', selectdata=True, antenna='0&1;2&3',\
+        plotms(vis=MS.file_name, xaxis='time', yaxis='elevation', selectdata=True, antenna='',\
             spw='0:1', coloraxis='field', plotfile=MS.dir_plot+'el_vs_time.png', overwrite=True)
+        af.open(MS.file_name)
 
         # report initial statistics
         stats_flag(MS.file_name)
@@ -75,9 +76,9 @@ def cspam_step_dataprep(MSs, conf):
         if MS.telescope == 'GMRT':
             flagcmd(vis=MS.file_name, inpmode='list',
                 inpfile=["mode='manual' autocorr=True",
-                        "mode='manual', spw='*:0'",
-                        "mode='quack', quackinterval=1, quackmode='beg'",
-                        "mode='clip', clipzeros=True,correlation='ABS_ALL'"], action='apply')
+                        "mode='manual' spw='*:0'",
+                        "mode='quack' quackinterval=1 quackmode='beg'",
+                        "mode='clip' clipzeros=True correlation='ABS_ALL'"], action='apply')
 
         #    if MS.nchan == 512:
         #        if freq > 600e6 and freq < 650e6: spw='0:0~10,0:502~511' # 610 MHz
