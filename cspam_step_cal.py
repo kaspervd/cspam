@@ -43,20 +43,36 @@ def cspam_step_cal(MSs, conf):
             default('setjy')
             setjy(vis=MS.file_name, field=cal_field_id, standard='Scaife-Heald 2012', usescratch=True, scalebychan=True)
 
-        # check for dead antennas/swapped pol
+        # check for dead antennas/swapped pol TODO
 
 
         # Bandpass calibration
         logging.info("# STARTING BANDPASS CALIBRATION")
         for cal_scan_id in MS.cal_scan_ids:
-            for step in ['preflag','postflag','final']:
+            for step in ['preflag','postflag']:
                 
                 # Run an flagger after the first cycle to remove most obvious RFI
                 if step == 'preflag':
                     default('flagcmd')
                     flagcmd(vis=MS.file_name, inpmode='list',
-                            inpfile=["mode='tfcrop' maxnpieces=5 timecutoff=4.0 freqcutoff=3.0 datacolumn='data'",
-                            "mode='rflag' timedevscale=5.0 freqdevscale=5.0 datacolumn='data'"], action='apply')
+                            inpfile=["mode='tfcrop' maxnpieces=5 timecutoff=4.0 freqcutoff=3.0 datacolumn='data' scan="+",".join(MS.tgt_scan_ids[cal_scan_id]),
+                            "mode='rflag' timedevscale=5.0 freqdevscale=5.0 datacolumn='data' scan="+",".join(MS.tgt_scan_ids[cal_scan_id])], action='apply')
+
+                # Run a flagger after the first B cycle to remove all others RFI
+                if step == 'postflag':
+                    default('flagcmd')
+                    flagcmd(vis=MS.file_name, inpmode='list',
+                            inpfile=["mode='tfcrop' maxnpieces=5 timecutoff=4.0 freqcutoff=3.0 datacolumn='corrected' scan="+",".join(MS.tgt_scan_ids[cal_scan_id]),
+                            "mode='rflag' timedevscale=3.0 freqdevscale=2.8 datacolumn='corrected' scan="+",".join(MS.tgt_scan_ids[cal_scan_id]),
+                            "mode='extend' growtime=50.0 growfreq=50.0 scan="+",".join(MS.tgt_scan_ids[cal_scan_id])], action='apply')
+
+                # Run a flagger after the first cycle to remove most obvious RFI
+                #if step == 'preflag':
+                #    default('flagcmd')
+                #    flagcmd(vis=MS.file_name, inpmode='list',
+                #            inpfile=["mode='tfcrop' maxnpieces=5 timecutoff=4.0 freqcutoff=3.0 datacolumn='corrected'",
+                #            "mode='rflag' timedevscale= 4.0 freqdevscale=3.0 datacolumn='corrected'",
+                #            "mode='extend' growtime=50.0 growfreq=50.0"], action='apply')
 
                 stats_flag(MS.file_name)
 
@@ -65,14 +81,14 @@ def cspam_step_cal(MSs, conf):
                 refAnt = refAntObj.calculate()[0]
                 logging.debug("Refant: " + refAnt)
             
-                # Delay before BP and flagging (no uvrange, delay is BL-based)
-                #if step != 'preflag':
-                #   default('gaincal')
-                #   gaincal(vis=MS.file_name, caltable=MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.K', gaintype = 'K',\
-                #       scan=cal_scan_id, spw='', solint='int', combine='', refant=refAnt, minblperant=MS.minBL_for_cal, minsnr=2, calmode='p')
+                # Delay before BP and flagging (no uvrange, delay is BL-based) TODO: remove?
+                if step != 'preflag':
+                   default('gaincal')
+                   gaincal(vis=MS.file_name, caltable=MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.K', gaintype = 'K',\
+                       scan=cal_scan_id, spw='', solint='int', combine='', refant=refAnt, minblperant=MS.minBL_for_cal, minsnr=2, calmode='p')
 
-                #gaintables.append(MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.K')
-                #plot_cal_table(MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.K', MS=MS)
+                   gaintables.append(MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.K')
+                   plot_cal_table(MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.K', MS=MS)
 
                 # Phase gaincal on a narrow set of chan for BP and flagging
                 default('gaincal')
@@ -82,7 +98,6 @@ def cspam_step_cal(MSs, conf):
         
                 gaintables.append(MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.Gap')
                 plot_cal_table(MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.Gap', MS=MS)
-        
         
                 # Gain cal phase TODO: amp and ph cal -> CLCAL -> clipping (narrower 3 times)
     
@@ -98,29 +113,11 @@ def cspam_step_cal(MSs, conf):
                 # Plot bandpass
                 plot_cal_table(MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.Bap', MS=MS)
                 
-                # Apply Bap to ALL SCANS #TODO
+                # Apply Bap to the cal scan and relative targets
                 default('applycal')
-                applycal(vis=MS.file_name, selectdata=True, scan='',\
+                applycal(vis=MS.file_name, selectdata=True, scan=",".join(MS.tgt_scan_ids[cal_scan_id]),\
                     gaintable=[MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.Bap'], calwt=False, flagbackup=False)
              
-                # Run a flagger after the first cycle to remove most obvious RFI
-                if step == 'preflag':
-                    default('flagcmd')
-                    flagcmd(vis=MS.file_name, inpmode='list',
-                            inpfile=["mode='tfcrop' maxnpieces=5 timecutoff=4.0 freqcutoff=3.0 datacolumn='corrected'",
-                            "mode='rflag' timedevscale= 4.0 freqdevscale=3.0 datacolumn='corrected'",
-                            "mode='extend' growtime=50.0 growfreq=50.0"], action='apply')
-
-                # Run a flagger after the first B cycle to remove all others RFI
-                if step == 'postflag':
-                    default('flagcmd')
-                    flagcmd(vis=MS.file_name, inpmode='list',
-                            inpfile=["mode='tfcrop' maxnpieces=5 timecutoff=4.0 freqcutoff=3.0 datacolumn='corrected'",
-                            "mode='rflag' timedevscale=3.0 freqdevscale=2.8 datacolumn='corrected'",
-                            "mode='extend' growtime=50.0 growfreq=50.0"], action='apply')
-
-                # flag statistics after flagging
-                stats_flag(MS.file_name)
                 # save flags
                 default('flagmanager')
                 flagmanager(vis=MS.file_name, mode='save', versionname='After_flagging_'+step, comment=str(datetime.datetime.now()))
@@ -157,13 +154,13 @@ def cspam_step_cal(MSs, conf):
                 gaintables.append(MS.dir_cal+'/cal'+cal_scan_id+'-cal_'+step+'.Gap')
                 plot_cal_table(MS.dir_cal+'/cal'+cal_scan_id+'-cal_'+step+'.Gap', MS=MS)
  
-                # disentangle ionospheric from instrumental effect
+                # Sisentangle ionospheric from instrumental effect
 
 
                 # D calib
                 
 
-                # find F matrix from the D matrix
+                # Find F matrix from the D matrix
 
 
             # end of calib cycles

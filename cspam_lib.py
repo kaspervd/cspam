@@ -18,8 +18,8 @@
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 import logging
-import numpy
-import casa
+import numpy as np
+import casa, casac
 
 class MSobj():
     """
@@ -27,6 +27,13 @@ class MSobj():
     """
     def __init__(self, conf):
         self.file_name = conf['file_name']
+
+        # save summary info which are often used
+        ms.open(self.file_name)
+        self.summary = ms.summary()
+        self.scansummary = ms.getscansummary()
+        ms.close()
+
         self.dir_img = self.file_name.replace('.MS','')+'-img/'
         # annoying workaround to keep caltables in the same dir of MSs, so plotcal works
         self.dir_cal = os.path.dirname(self.file_name) 
@@ -42,9 +49,9 @@ class MSobj():
         central_nchan = self.nchan*conf['central_chan_percentage']/100.
         self.central_chans = str(int(round(self.nchan/2.-central_nchan/2.))) + '~' + str(int(round(self.nchan/2.+central_nchan/2.)))
 
-        self.set_flag(conf['flag'])
-        self.set_cal_scan_ids(conf['cal_scans'])
-        self.set_tgt_scan_ids(conf['tgt_scans'])
+        self.flag = self.set_flag(conf['flag']) # manual flag to be used with flagdata command
+        self.set_cal_scan_ids(conf['cal_scans']) # a list of cals scans
+        self.tgt_scan_ids = self.set_tgt_scan_ids(conf['tgt_scans']) # dict of cal scans contining groups of relative cal+tgt scans
         
         if self.telescope == 'GMRT': self.uvrange = '>1000m'
         if self.telescope == 'EVLA': self.uvrange = ''
@@ -53,8 +60,9 @@ class MSobj():
         """
         Return: the number of channels
         """
-        tb.open(self.file_name+'/SPECTRAL_WINDOW')
-        nchan = tb.getcol('NUM_CHAN')[0]
+        LocTb = casa.table
+        LocTb.open(self.file_name+'/SPECTRAL_WINDOW')
+        nchan = LocTb.getcol('NUM_CHAN')[0]
         tb.close()
         return nchan
 
@@ -62,9 +70,10 @@ class MSobj():
         """
         Return: the telscope name
         """
-        tb.open(self.file_name+'/OBSERVATION')
-        telescope = tb.getcol('TELESCOPE_NAME')[0]
-        tb.close()
+        LocTb = casa.table
+        LocTb.open(self.file_name+'/OBSERVATION')
+        telescope = LocTb.getcol('TELESCOPE_NAME')[0]
+        LocTb.close()
         return telescope
 
     def get_band(self):
@@ -85,18 +94,23 @@ class MSobj():
         """
         Return: the reference frequency
         """
+        LocTb = casa.table
         tb.open(self.file_name+'/SPECTRAL_WINDOW')
         freq = tb.getcol('REF_FREQUENCY')[0]
         tb.close()
+        LocTb.close()
+        del LocTb
         return freq
 
     def get_antenna_names(self):
         """
         Retrun: list of antenna names
         """
-        tb.open( '%s/ANTENNA' % self.file_name)
-        antenna_names = tb.getcol( 'NAME' )
-        tb.close()
+        LocTb = casa.table
+        LocTb.open( '%s/ANTENNA' % self.file_name)
+        antenna_names = LocTb.getcol( 'NAME' )
+        LocTb.close()
+        del LocTb
         return antenna_names
 
     def get_minBL_for_cal(self):
@@ -118,18 +132,14 @@ class MSobj():
                 time = flag_group.split('=')[1]
                 flag[ant] = time
             
-        self.flag = flag
+        return flag
 
-    def set_cal_scan_ids(self, user_cal_scan_ids=['']):
+    def set_cal_scan_ids(self, usr_cal_scan_ids=['']):
         """
         Save the calibrator scans in a list
         If empy list given, then check for coords
         """
         known_cals = {
-        '3C48':{'m0': {'unit': 'rad', 'value': 0.42624576436309852},
-                'm1': {'unit': 'rad', 'value': 0.57874633182450852},
-                'refer': 'J2000',
-                'type': 'direction'},
         '3C147':{'m0': {'unit': 'rad', 'value': 1.49488177653836},
                 'm1': {'unit': 'rad', 'value': 0.87008056907685105},
                 'refer': 'J2000',
@@ -149,16 +159,19 @@ class MSobj():
         '3C380':{'m0': {'unit': 'rad', 'value': 4.8412379124131713},
                 'm1': {'unit': 'rad', 'value': 0.85078013643188044},
                 'refer': 'J2000',
+                'type': 'direction'},
+        '3C48':{'m0': {'unit': 'rad', 'value': 0.42624576436309852},
+                'm1': {'unit': 'rad', 'value': 0.57874633182450852},
+                'refer': 'J2000',
                 'type': 'direction'}
         }
         
-        if user_cal_scan_ids == ['']: user_cal_scan_ids = ms.getscansummary().keys()
-
+        ms.open(self.file_name)
         cal_scan_ids = []
         cal_field_ids = []
-        for cal_scan_id in user_cal_scan_ids:
+        for cal_scan_id in self.scansummary.keys():
+            if cal_scan_id not in usr_cal_scan_ids and usr_cal_scan_ids != ['']: continue # user do not want this scan
             cal_field_id = self.get_field_id_from_scan_id(cal_scan_id)
-            ms.open(self.file_name)
             dir = ms.getfielddirmeas(fieldid=int(cal_field_id))
             # if distance with known cal is < than 60" then add it
             for known_cal, known_cal_dir in known_cals.iteritems():
@@ -175,55 +188,75 @@ class MSobj():
                     tb.open('%s/SOURCE' % self.file_name, nomodify=False)
                     tb.putcell('NAME', source_id, known_cal)
                     tb.close()
-                    
+
                     break # cal found, useless to keep on iterating
-                     
         ms.close()
-        self.cal_scan_ids = cal_scan_ids
-        self.cal_field_ids = list(set(cal_field_ids))
-        if self.cal_scan_ids == []:
+
+        if cal_scan_ids == []:
             logging.critical('No calibrators found')
             sys.exit(1)
 
+        self.cal_scan_ids = cal_scan_ids
+        self.cal_field_ids = list(set(cal_field_ids))
 
-    def set_tgt_scan_ids(self, tgt_scans=['']):
+
+    def set_tgt_scan_ids(self, usr_tgt_scan_ids=['']):
         """
-        Set the target scans in a list
-        If empty list given, then all scans are tgt scans
+        Set the target scans in a dict associating each calibrator to the closest in time {cal1:[tgt1,tgt2],cal2:[tgt3]}
+        if tgt_scans is given, then restrict to those scans
         """
-        ms.open(self.file_name)
-        summary = ms.summary()
-        ms.close()
-        if tgt_scans == ['']:
-            self.tgt_scans = ''
-        else:
-            self.tgt_scans = tgt_scans
+
+        # getting calibrators central time
+        cal_times = {}
+        for cal_scan_id in self.cal_scan_ids:
+            begin = self.scansummary[cal_scan_id]['0']['BeginTime']
+            end = self.scansummary[cal_scan_id]['0']['EndTime']
+            cal_times[cal_scan_id] = begin+(end-begin)/2.
+
+        # finding the closest cal in time for each target
+        tgt_scans_ids = {}
+        for tgt_scan_id, tgt_scan_data in self.scansummary.iteritems():
+
+            if tgt_scan_id not in usr_tgt_scan_ids and usr_tgt_scan_ids != ['']: continue # user do not want this scan
+
+            if tgt_scan_id in self.cal_scan_ids: continue # cal scan, not a tgt scan
+                
+            begin = tgt_scan_data['0']['BeginTime']
+            end = tgt_scan_data['0']['EndTime']
+            tgt_time = begin+(end-begin)/2.
+
+            min_time = np.inf
+            for cal_scan_id, cal_time in cal_times.iteritems():
+                if abs(cal_time - tgt_time) < abs(min_time - tgt_time):
+                    min_time = cal_time
+                    min_cal = cal_scan_id
+
+            # add the calibrator to the dict tgt_scans_ids
+            if not min_cal in tgt_scans_ids: tgt_scans_ids[min_cal] = [min_cal]
+            tgt_scans_ids[min_cal].append(tgt_scan_id)
+
+        return tgt_scans_ids
+
 
     def get_field_name_from_field_id(self, field):
         """
         Return: the source name associated with a given field id
         """
-        ms.open(self.file_name)
-        field_name = ms.summary()['field_'+str(field)]['name']
-        ms.close()
+        field_name = self.summary['field_'+str(field)]['name']
         return field_name
  
     def get_field_name_from_scan_id(self, scan):
         """
         Return: the source name associated with a given scan id
         """
-        ms.open(self.file_name)
-        field_name = ms.summary()['scan_'+str(scan)]['0']['FieldName']
-        ms.close()
+        field_name = self.summary['scan_'+str(scan)]['0']['FieldName']
         return field_name
 
     def get_field_id_from_scan_id(self, scan):
         """
         Return: the field id associated with a given scan id
         """
-        ms.open(self.file_name)
-        field_id = ms.summary()['scan_'+str(scan)]['0']['FieldId']
-        ms.close()
+        field_id = self.summary['scan_'+str(scan)]['0']['FieldId']
         return str(field_id)
         
 
@@ -262,14 +295,14 @@ def plot_cal_table(calt, MS, ctype=''):
         Type can be: amp or ph (in rad)
         """
         tb.open(caltable)
-        if 'K' in ctype: cpar=tb.getcol('FPARAM')
-        else: cpar=tb.getcol('CPARAM')
-        flags=tb.getcol('FLAG')
+        #if 'K' in ctype: par = tb.getcol('FPARAM')
+        par = tb.getcol('CPARAM')
+        flags = tb.getcol('FLAG')
         tb.close()
-        if 'a' in ctype: val=np.abs(cpar)
-        if 'p' in ctype: val=np.arctan2(np.imag(cpar),np.real(cpar))
-        good=np.logical_not(flags)
-        maxval=np.max(val[good])
+        if 'a' in ctype: val = np.abs(par)
+        if 'p' in ctype: val = np.arctan2(np.imag(par),np.real(par))
+        good = np.logical_not(flags)
+        maxval = np.max(val[good])
         return maxval
 
     if 'G' in ctype:
@@ -298,7 +331,6 @@ def plot_cal_table(calt, MS, ctype=''):
                     figfile=filename)
 
     if ctype == 'K':
-        plotmax = getMax(calt, 'a')
         for ii in range(nplots):
             filename=MS.dir_plot+calt.split('/')[-1]+'_'+str(ii)+'.png'
             syscommand='rm -rf '+filename
@@ -306,7 +338,7 @@ def plot_cal_table(calt, MS, ctype=''):
             antPlot=str(ii*3)+'~'+str(ii*3+2)
             default('plotcal')
             plotcal(caltable=calt,xaxis='time',yaxis='delay',antenna=antPlot,subplot=311,\
-                iteration='antenna',plotrange=[0,0,0,plotmax],plotsymbol='o-',plotcolor='green',\
+                iteration='antenna',plotsymbol='o-',plotcolor='green',\
                 markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
 
     if 'B' in ctype:
@@ -497,7 +529,7 @@ class RefAntHeuristics:
 
 # Outputs:
 # --------
-# The numpy array of strings containing the ranked reference antenna list,
+# The np array of strings containing the ranked reference antenna list,
 # returned via the function value.
 
 # Modification history:
@@ -547,9 +579,9 @@ class RefAntHeuristics:
         # reference antennas.  NB: The best antennas have the highest
         # score, so a reverse sort is required.
 
-        keys = numpy.array(score.keys())
-        values = numpy.array(score.values())
-        argSort = numpy.argsort(values)[::-1]
+        keys = np.array(score.keys())
+        values = np.array(score.values())
+        argSort = np.argsort(values)[::-1]
 
         refAnt = keys[argSort]
 
@@ -569,7 +601,7 @@ class RefAntHeuristics:
 
 # Outputs:
 # --------
-# The numpy array of strings containing the antenna names, returned via the
+# The np array of strings containing the antenna names, returned via the
 # function value.
 
 # Modification history:
@@ -733,11 +765,11 @@ class RefAntGeometry:
 # --------
 # The python dictionary containing the antenna information, returned via the
 # function value.  The dictionary format is:
-# 'position'          - This numpy array contains the antenna positions.
-# 'flag_row'          - This numpy array of booleans contains the flag row
+# 'position'          - This np array contains the antenna positions.
+# 'flag_row'          - This np array of booleans contains the flag row
 #                       booleans.  NB: This element is of limited use now and
 #                       may be eliminated.
-# 'name'              - This numpy array of strings contains the antenna names.
+# 'name'              - This np array of strings contains the antenna names.
 # 'position_keywords' - This python dictionary contains the antenna information.
 
 # Modification history:
@@ -926,24 +958,24 @@ class RefAntGeometry:
         lats,
         ):
 
-        # Convert the dictionaries to numpy float arrays.  The median
+        # Convert the dictionaries to np float arrays.  The median
         # longitude is subtracted.
 
-        radiusValues = numpy.array(radii.values())
+        radiusValues = np.array(radii.values())
 
-        longValues = numpy.array(longs.values())
-        longValues -= numpy.median(longValues)
+        longValues = np.array(longs.values())
+        longValues -= np.median(longValues)
 
-        latValues = numpy.array(lats.values())
+        latValues = np.array(lats.values())
 
         # Calculate the x and y antenna locations.  The medians are
         # subtracted.
 
-        x = longValues * numpy.cos(latValues) * radiusValues
-        x -= numpy.median(x)
+        x = longValues * np.cos(latValues) * radiusValues
+        x -= np.median(x)
 
         y = latValues * radiusValues
-        y -= numpy.median(y)
+        y -= np.median(y)
 
         # Calculate the antenna distances from the array reference and
         # return them
@@ -952,7 +984,7 @@ class RefAntGeometry:
         names = radii.keys()
 
         for (i, ant) in enumerate(names):
-            distance[ant] = numpy.sqrt(pow(x[i], 2) + pow(y[i], 2))
+            distance[ant] = np.sqrt(pow(x[i], 2) + pow(y[i], 2))
 
         return distance
 
@@ -995,8 +1027,8 @@ class RefAntGeometry:
         # Get the number of good data, calculate the fraction of good
         # data, and calculate the good and bad weights
 
-        far = numpy.array(distance.values(), numpy.float)
-        fFar = far / float(numpy.max(far))
+        far = np.array(distance.values(), np.float)
+        fFar = far / float(np.max(far))
 
         wFar = fFar * len(far)
         wClose = (1.0 - fFar) * len(far)
@@ -1234,8 +1266,8 @@ class RefAntFlagging:
         # Get the number of good data, calculate the fraction of good
         # data, and calculate the good and bad weights
 
-        nGood = numpy.array(good.values(), numpy.float)
-        fGood = nGood / float(numpy.max(nGood))
+        nGood = np.array(good.values(), np.float)
+        fGood = nGood / float(np.max(nGood))
 
         wGood = fGood * len(nGood)
         wBad = (1.0 - fGood) * len(nGood)
