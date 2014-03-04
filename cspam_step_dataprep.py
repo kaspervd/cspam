@@ -57,7 +57,7 @@ def cspam_step_dataprep(MSs, conf):
         # plot elevation
         default('plotms')
         plotms(vis=MS.file_name, xaxis='time', yaxis='elevation', selectdata=True, antenna='',\
-            spw='0:1', coloraxis='field', plotfile=MS.dir_plot+'el_vs_time.png', overwrite=True)
+            spw='', coloraxis='field', plotfile=MS.dir_plot+'el_vs_time.png', overwrite=True)
         af.open(MS.file_name)
 
         # report initial statistics

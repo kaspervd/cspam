@@ -50,8 +50,8 @@ class MSobj():
         self.central_chans = str(int(round(self.nchan/2.-central_nchan/2.))) + '~' + str(int(round(self.nchan/2.+central_nchan/2.)))
 
         self.flag = self.set_flag(conf['flag']) # manual flag to be used with flagdata command
-        self.set_cal_scan_ids(conf['cal_scans']) # a list of cals scans
-        self.tgt_scan_ids = self.set_tgt_scan_ids(conf['tgt_scans']) # dict of cal scans contining groups of relative cal+tgt scans
+        self.set_cal_scan_ids(conf['cal_scans']) # sets cal_scan_ids cal_scan_names and cal_scan_unwanted
+        self.tgt_scan_dict = self.set_tgt_scan_dict(conf['tgt_scans']) # dict of cal scans contining groups of relative cal+tgt scans
         
         if self.telescope == 'GMRT': self.uvrange = '>1000m'
         if self.telescope == 'EVLA': self.uvrange = ''
@@ -169,16 +169,21 @@ class MSobj():
         ms.open(self.file_name)
         cal_scan_ids = []
         cal_field_ids = []
+        cal_scan_ids_unwanted = []
         for cal_scan_id in self.scansummary.keys():
-            if cal_scan_id not in usr_cal_scan_ids and usr_cal_scan_ids != ['']: continue # user do not want this scan
             cal_field_id = self.get_field_id_from_scan_id(cal_scan_id)
             dir = ms.getfielddirmeas(fieldid=int(cal_field_id))
             # if distance with known cal is < than 60" then add it
             for known_cal, known_cal_dir in known_cals.iteritems():
                 if  au.angularSeparationOfDirectionsArcsec(dir, known_cal_dir) <= 60:
-                    logging.info('Found '+known_cal+' in scan: '+cal_scan_id)
-                    cal_scan_ids.append(cal_scan_id)
-                    cal_field_ids.append(str(cal_field_id))
+                    if cal_scan_id not in usr_cal_scan_ids and usr_cal_scan_ids != ['']:
+                         # user do not want this scan
+                         logging.info('Found '+known_cal+' in scan: '+cal_scan_id+' *** Ignored')
+                         cal_scan_ids_unwanted.append(cal_scan_id)
+                    else:
+                        logging.info('Found '+known_cal+' in scan: '+cal_scan_id)
+                        cal_scan_ids.append(cal_scan_id)
+                        cal_field_ids.append(str(cal_field_id))
 
                     # update field name for SetJy
                     tb.open('%s/FIELD' % self.file_name, nomodify=False)
@@ -198,9 +203,10 @@ class MSobj():
 
         self.cal_scan_ids = cal_scan_ids
         self.cal_field_ids = list(set(cal_field_ids))
+        self.cal_scan_ids_unwanted = cal_scan_ids_unwanted
 
 
-    def set_tgt_scan_ids(self, usr_tgt_scan_ids=['']):
+    def set_tgt_scan_dict(self, usr_tgt_scan_ids=['']):
         """
         Set the target scans in a dict associating each calibrator to the closest in time {cal1:[tgt1,tgt2],cal2:[tgt3]}
         if tgt_scans is given, then restrict to those scans
@@ -214,10 +220,11 @@ class MSobj():
             cal_times[cal_scan_id] = begin+(end-begin)/2.
 
         # finding the closest cal in time for each target
-        tgt_scans_ids = {}
+        tgt_scans_dict = {}
         for tgt_scan_id, tgt_scan_data in self.scansummary.iteritems():
 
             if tgt_scan_id not in usr_tgt_scan_ids and usr_tgt_scan_ids != ['']: continue # user do not want this scan
+            if tgt_scan_id in self.cal_scan_ids_unwanted: continue # it's a discarded calibrator
 
             if tgt_scan_id in self.cal_scan_ids: continue # cal scan, not a tgt scan
                 
@@ -231,11 +238,17 @@ class MSobj():
                     min_time = cal_time
                     min_cal = cal_scan_id
 
-            # add the calibrator to the dict tgt_scans_ids
-            if not min_cal in tgt_scans_ids: tgt_scans_ids[min_cal] = [min_cal]
-            tgt_scans_ids[min_cal].append(tgt_scan_id)
+            # add the calibrator to the dict tgt_scans_dict
+            if not min_cal in tgt_scans_dict: tgt_scans_dict[min_cal] = [min_cal]
+            tgt_scans_dict[min_cal].append(tgt_scan_id)
 
-        return tgt_scans_ids
+        # printing the results
+        for cal_scan_id in tgt_scans_dict:
+            logging.info('Calibrator '+cal_scan_id+' ('+self.get_field_name_from_scan_id(cal_scan_id)+'):')
+            for tgt_scan_id in tgt_scans_dict[cal_scan_id]:
+                logging.info('\t * '+tgt_scan_id+' ('+self.get_field_name_from_scan_id(tgt_scan_id)+') ')
+
+        return tgt_scans_dict
 
 
     def get_field_name_from_field_id(self, field):
@@ -307,7 +320,7 @@ def plot_cal_table(calt, MS, ctype=''):
 
     if 'G' in ctype:
         if 'a' in ctype:
-            plotmax = getMax(calt, ctype)
+            plotmax = getMax(calt, 'a')
             for ii in range(nplots):
                 filename=MS.dir_plot+calt.split('/')[-1]+'_a'+str(ii)+'.png'
                 syscommand='rm -rf '+filename
@@ -320,6 +333,7 @@ def plot_cal_table(calt, MS, ctype=''):
 
         if 'p' in ctype:
             for ii in range(nplots):
+                plotmax = getMax(calt, 'p')*180/np.pi
                 filename=MS.dir_plot+calt.split('/')[-1]+'_p'+str(ii)+'.png'
                 syscommand='rm -rf '+filename
                 os.system(syscommand)
@@ -343,7 +357,7 @@ def plot_cal_table(calt, MS, ctype=''):
 
     if 'B' in ctype:
         if 'a' in ctype:
-            plotmaxa = getMax(calt, ctype)
+            plotmaxa = getMax(calt, 'a')
             for ii in range(nplots):
                 filename=MS.dir_plot+calt.split('/')[-1]+'_a'+str(ii)+'.png'
                 syscommand='rm -rf '+filename
@@ -355,7 +369,7 @@ def plot_cal_table(calt, MS, ctype=''):
                     plotcolor='blue',markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
 
         if 'p' in ctype:
-            plotmaxp = getMax(calt, ctype)*180./pi
+            plotmaxp = getMax(calt, 'p')*180./np.pi
             for ii in range(nplots):
                 filename=MS.dir_plot+calt.split('/')[-1]+'_p'+str(ii)+'.png'
                 syscommand='rm -rf '+filename

@@ -55,16 +55,16 @@ def cspam_step_cal(MSs, conf):
                 if step == 'preflag':
                     default('flagcmd')
                     flagcmd(vis=MS.file_name, inpmode='list',
-                            inpfile=["mode='tfcrop' maxnpieces=5 timecutoff=4.0 freqcutoff=3.0 datacolumn='data' scan="+",".join(MS.tgt_scan_ids[cal_scan_id]),
-                            "mode='rflag' timedevscale=5.0 freqdevscale=5.0 datacolumn='data' scan="+",".join(MS.tgt_scan_ids[cal_scan_id])], action='apply')
+                            inpfile=["mode='tfcrop' maxnpieces=5 timecutoff=4.0 freqcutoff=3.0 datacolumn='data' scan="+cal_scan_id,
+                            "mode='rflag' timedevscale=5.0 freqdevscale=5.0 datacolumn='data' scan="+cal_scan_id], action='apply')
 
                 # Run a flagger after the first B cycle to remove all others RFI
                 if step == 'postflag':
                     default('flagcmd')
                     flagcmd(vis=MS.file_name, inpmode='list',
-                            inpfile=["mode='tfcrop' maxnpieces=5 timecutoff=4.0 freqcutoff=3.0 datacolumn='corrected' scan="+",".join(MS.tgt_scan_ids[cal_scan_id]),
-                            "mode='rflag' timedevscale=3.0 freqdevscale=2.8 datacolumn='corrected' scan="+",".join(MS.tgt_scan_ids[cal_scan_id]),
-                            "mode='extend' growtime=50.0 growfreq=50.0 scan="+",".join(MS.tgt_scan_ids[cal_scan_id])], action='apply')
+                            inpfile=["mode='tfcrop' maxnpieces=5 timecutoff=4.0 freqcutoff=3.0 datacolumn='corrected' scan="+",".join(MS.tgt_scan_dict[cal_scan_id]),
+                            "mode='rflag' timedevscale=3.0 freqdevscale=2.8 datacolumn='corrected' scan="+",".join(MS.tgt_scan_dict[cal_scan_id]),
+                            "mode='extend' growtime=50.0 growfreq=50.0 scan="+",".join(MS.tgt_scan_dict[cal_scan_id])], action='apply')
 
                 # Run a flagger after the first cycle to remove most obvious RFI
                 #if step == 'preflag':
@@ -82,7 +82,7 @@ def cspam_step_cal(MSs, conf):
                 logging.debug("Refant: " + refAnt)
             
                 # Delay before BP and flagging (no uvrange, delay is BL-based) TODO: remove?
-                if step != 'preflag':
+                if step == 'postflag':
                    default('gaincal')
                    gaincal(vis=MS.file_name, caltable=MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.K', gaintype = 'K',\
                        scan=cal_scan_id, spw='', solint='int', combine='', refant=refAnt, minblperant=MS.minBL_for_cal, minsnr=2, calmode='p')
@@ -102,10 +102,12 @@ def cspam_step_cal(MSs, conf):
                 # Gain cal phase TODO: amp and ph cal -> CLCAL -> clipping (narrower 3 times)
     
                 # Bandpass calibration (if delay calculated is)
+                if MS.telescope == 'EVLA': minsnr = 5
+                if MS.telescope == 'GMRT': minsnr = 2
                 default('bandpass')
                 bandpass(vis=MS.file_name, caltable=MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.Bap', selectdata=True,\
                     uvrange=MS.uvrange, scan=cal_scan_id, solint='inf', combine='', refant=refAnt,\
-                    minblperant=MS.minBL_for_cal, minsnr=2, solnorm=True, bandtype='B', gaintable=gaintables)
+                    minblperant=MS.minBL_for_cal, minsnr=minsnr, solnorm=True, bandtype='B', gaintable=gaintables)
 
                 # Remove channels below 5 % of the max
                 flag_low_Ba(MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.Bap', p = 5)
@@ -115,7 +117,7 @@ def cspam_step_cal(MSs, conf):
                 
                 # Apply Bap to the cal scan and relative targets
                 default('applycal')
-                applycal(vis=MS.file_name, selectdata=True, scan=",".join(MS.tgt_scan_ids[cal_scan_id]),\
+                applycal(vis=MS.file_name, selectdata=True, scan=",".join(MS.tgt_scan_dict[cal_scan_id]),\
                     gaintable=[MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.Bap'], calwt=False, flagbackup=False)
              
                 # save flags
@@ -153,6 +155,7 @@ def cspam_step_cal(MSs, conf):
         
                 gaintables.append(MS.dir_cal+'/cal'+cal_scan_id+'-cal_'+step+'.Gap')
                 plot_cal_table(MS.dir_cal+'/cal'+cal_scan_id+'-cal_'+step+'.Gap', MS=MS)
+                sys.exit(1)
  
                 # Sisentangle ionospheric from instrumental effect
 
