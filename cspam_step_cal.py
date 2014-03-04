@@ -76,20 +76,11 @@ def cspam_step_cal(MSs, conf):
 
                 stats_flag(MS.file_name)
 
-                gaintables = []
+                gaintables = [] # reset gaintables
                 refAntObj = RefAntHeuristics(vis=MS.file_name, field=MS.get_field_id_from_scan_id(cal_scan_id), geometry=True, flagging=True)
                 refAnt = refAntObj.calculate()[0]
                 logging.debug("Refant: " + refAnt)
             
-                # Delay before BP and flagging (no uvrange, delay is BL-based) TODO: remove?
-                if step == 'postflag':
-                   default('gaincal')
-                   gaincal(vis=MS.file_name, caltable=MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.K', gaintype = 'K',\
-                       scan=cal_scan_id, spw='', solint='int', combine='', refant=refAnt, minblperant=MS.minBL_for_cal, minsnr=2, calmode='p')
-
-                   gaintables.append(MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.K')
-                   plot_cal_table(MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.K', MS=MS)
-
                 # Phase gaincal on a narrow set of chan for BP and flagging
                 default('gaincal')
                 gaincal(vis=MS.file_name, caltable=MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.Gap', gaintype = 'G',\
@@ -99,6 +90,17 @@ def cspam_step_cal(MSs, conf):
                 gaintables.append(MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.Gap')
                 plot_cal_table(MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.Gap', MS=MS)
         
+                # Delay before BP and flagging (no uvrange, delay is BL-based) TODO: remove?
+                if step == 'postflag':
+                   default('gaincal')
+                   gaincal(vis=MS.file_name, caltable=MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.K', gaintype = 'K',\
+                       scan=cal_scan_id, spw='', solint='int', combine='',
+                       refant=refAnt, minblperant=MS.minBL_for_cal, minsnr=2,
+                       calmode='p', gaintable=gaintables)
+
+                   gaintables.append(MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.K')
+                   plot_cal_table(MS.dir_cal+'/cal'+cal_scan_id+'-init_'+step+'.K', MS=MS)
+
                 # Gain cal phase TODO: amp and ph cal -> CLCAL -> clipping (narrower 3 times)
     
                 # Bandpass calibration (if delay calculated is)

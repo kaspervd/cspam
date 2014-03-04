@@ -64,6 +64,7 @@ conf = get_conf()
 print conf
 
 execfile(conf['prog_dir']+'/cspam_lib.py')
+execfile(conf['prog_dir']+'/cspam_lib_cal.py')
 
 # set logging level
 if conf['debug'] == 2: _logging.setLevel('debug')

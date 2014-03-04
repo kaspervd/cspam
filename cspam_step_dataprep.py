@@ -68,7 +68,7 @@ def cspam_step_dataprep(MSs, conf):
             hanningsmooth(vis=MS.file_name, datacolumn='data')
             flagcmd(vis=MS.file_name, inpmode='list',
                 inpfile=["mode='manual' autocorr=True",
-                        "mode='shadow'",
+                        "mode='shadow' tolerance=0.0",
                         "mode='quack' quackinterval=1 quackmode='beg'",
                         "mode='clip' clipzeros=True correlation='ABS_ALL'"], action='apply')
 
