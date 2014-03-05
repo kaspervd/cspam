@@ -119,10 +119,11 @@ class STobj():
 #        return val_matrix
 
 
-    def get_val_iter(self, flag=False, return_axis='VAL', iter_axes=['SPW','SCAN','ANT'], **parm):
+    def get_val_iter(self, flag_mode=0, return_axis='VAL',
+    iter_axes=['SPECTRAL_WINDOW_ID','SCAN_NUMBER','ANTENNA1'], **parm):
         """
         Return an iterator which iterates along SPW, SCAN, ANT
-        flag = True|False : return only unflagged data
+        flag_mode = 0,1,2 : 0 nothing, 1 return flags as additional array, 2 apply flags
         return_axis = 'VAL' : the returned axis
         iter_axes = specified another set of iteration axes
         **parm = for each axes can specify restrictions
@@ -134,6 +135,7 @@ class STobj():
 
         # get return axis values
         return_axis_val = self.get_col(return_axis)
+        if flag_mode != 0: flag_axis_val = self.get_col('FLAG')
 
         # get iter_axes unique and complete values
         iter_axes_val = []
@@ -142,14 +144,26 @@ class STobj():
             iter_axes_val.append(self.get_col(iter_axis))
             iter_axes_val_u.append(np.unique(iter_axes_val[-1]))
 
-        # create mask
         for this_coords in list(itertools.product(*iter_axes_val_u)):
             coords = {}
+            # create mask
             mask = np.ones(len(return_axis_val[-1]))
             for i, iter_axis in enumerate(iter_axes):
                 mask = np.logical_and(mask, iter_axes_val[i] == this_coords[i])
                 coords[iter_axis] = this_coords[i]
-            yield coords, return_axis_val[:,:,mask]
+            # remove flagged data, if requested
+            if flag_mode == 0: yield coords, return_axis_val[:,:,mask]
+            elif flag_mode == 1: yield coords, return_axis_val[:,:,mask], flag_axis_val[:,:,mask]
+            elif flag_mode == 2: yield coords, return_axis_val[:,:,mask][~flag_axis_val[:,:,mask]]
+
+
+    def set_val(self, coord, val, axis=''):
+        """
+        Set the subset of the "axis" column identified with coords (a dict as returned by get_val_iter)
+        coord: a dict as returned by get_val_iter
+        val: the values
+        axis: the col name (e.g. FLAG)
+        """
 
 
     def get_min_max(self, aptype = 'a'):
@@ -157,8 +171,9 @@ class STobj():
         Return minumum and maximum unflagged val
         aptype can be: 'a' or 'p' (return val in rad)
         """
-        if 'a' in ctype: val = np.abs( self.get_col('VAL') )
-        if 'p' in ctype: val = np.arctan2(np.imag( self.get_col('VAL') ),np.real( self.get_col('VAL') ))
+        assert aptype == 'a' or aptype == 'p'
+        if 'a' == aptype: val = np.abs( self.get_col('VAL') )
+        elif 'p' == aptype: val = np.arctan2(np.imag( self.get_col('VAL') ),np.real( self.get_col('VAL') ))
         good = np.logical_not(self.get_col('FLAG'))
         maxval = np.max(val[good])
         minval = np.min(val[good])
@@ -198,35 +213,33 @@ def unwrap_phase( x, window = 10, alpha = 0.01, iterations = 3,
     return xx
 
 
-def sol_filter(calt, ctype=''):
+# TODO: what if reference antenna changes?
+def sol_filter(calt):
     """
     Do complex filtering on solution tables
     """
     ST = STobj(calt) 
     
-    # find the best reference antenna
-    # looking at flagged data
-    
+    for coord, val, flag in ST.get_val_iter(flag_mode=1):
+        # de-trend
+        scipy.signal.detrend
 
-    # interpolate for missing points
+        # filtering
 
 
-    # de-trend
-    scipy.signal.detrend
-
-    # filtering
-
+        # writing back
+        ST.set_val(coord, flag, axis='FLAG')
 
 
 def plot_cal_table(calt, MS):
     """
     Do the standard plot of gain solutions
     """
-    ST = STobj(calt, ctype) 
+    ST = STobj(calt) 
     nplots = len(ST.get_antenna_names())/3
 
-    if 'G' in ctype:
-        if 'a' in ctype:
+    if 'G' == ST.st_type()[0]:
+        if 'a' in calt[-3,-1]:
             plotmin, plotmax = ST.get_min_max('a')
             for ii in range(nplots):
                 filename=MS.dir_plot+calt.split('/')[-1]+'_a'+str(ii)+'.png'
@@ -238,7 +251,7 @@ def plot_cal_table(calt, MS):
                     iteration='antenna',plotrange=[0,0,plotmin,plotmax],plotsymbol='o-',plotcolor='red',\
                     markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
 
-        if 'p' in ctype:
+        if 'p' in calt[-3,-1]:
             for ii in range(nplots):
                 plotmin, plotmax = ST.get_min_max('p')*180/np.pi
                 filename=MS.dir_plot+calt.split('/')[-1]+'_p'+str(ii)+'.png'
@@ -251,7 +264,7 @@ def plot_cal_table(calt, MS):
                     plotsymbol='o-',plotcolor='blue',markersize=5.0,fontsize=10.0,showgui=False,\
                     figfile=filename)
 
-    if ctype == 'K':
+    if 'K' == ST.st_type()[0]:
         for ii in range(nplots):
             filename=MS.dir_plot+calt.split('/')[-1]+'_'+str(ii)+'.png'
             syscommand='rm -rf '+filename
@@ -262,8 +275,8 @@ def plot_cal_table(calt, MS):
                 iteration='antenna',plotsymbol='o-',plotcolor='green',\
                 markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
 
-    if 'B' in ctype:
-        if 'a' in ctype:
+    if 'B' == ST.st_type()[0]:
+        if 'a' in calt[-3,-1]:
             plotmin, plotmax = ST.get_min_max('a')
             for ii in range(nplots):
                 filename=MS.dir_plot+calt.split('/')[-1]+'_a'+str(ii)+'.png'
@@ -275,7 +288,7 @@ def plot_cal_table(calt, MS):
                     iteration='antenna',plotrange=[0,0,plotmin,plotmax],showflags=False,plotsymbol='o',\
                     plotcolor='blue',markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
 
-        if 'p' in ctype:
+        if 'p' in calt[-3,-1]:
             plotmin, plotmax = ST.get_min_max('p')*180/np.pi
             for ii in range(nplots):
                 filename=MS.dir_plot+calt.split('/')[-1]+'_p'+str(ii)+'.png'
