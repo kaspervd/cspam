@@ -119,23 +119,21 @@ class STobj():
 #        return val_matrix
 
 
-    def get_val_iter(self, flag_mode=0, return_axis='VAL',
-    iter_axes=['SPECTRAL_WINDOW_ID','SCAN_NUMBER','ANTENNA1'], **parm):
+    def get_val_iter(self, return_axes=['VAL'],
+    iter_axes=['SPECTRAL_WINDOW_ID','SCAN_NUMBER','ANTENNA1']):
         """
         Return an iterator which iterates along SPW, SCAN, ANT
-        flag_mode = 0,1,2 : 0 nothing, 1 return flags as additional array, 2 apply flags
         return_axis = 'VAL' : the returned axis
         iter_axes = specified another set of iteration axes
-        **parm = for each axes can specify restrictions
 
         Return: dict of coords and np.array of vals
         """
         import itertools
-        assert return_axis not in iter_axes
-
         # get return axis values
-        return_axis_val = self.get_col(return_axis)
-        if flag_mode != 0: flag_axis_val = self.get_col('FLAG')
+        return_axes_val = {}
+        for return_axis in return_axes:
+            assert return_axis not in iter_axes
+            return_axes_val[return_axis] = self.get_col(return_axis)
 
         # get iter_axes unique and complete values
         iter_axes_val = []
@@ -146,15 +144,19 @@ class STobj():
 
         for this_coords in list(itertools.product(*iter_axes_val_u)):
             coords = {}
+
             # create mask
-            mask = np.ones(len(return_axis_val[-1]))
+            mask = np.ones(len(return_axes_val[return_axes[0]]))
             for i, iter_axis in enumerate(iter_axes):
                 mask = np.logical_and(mask, iter_axes_val[i] == this_coords[i])
                 coords[iter_axis] = this_coords[i]
-            # remove flagged data, if requested
-            if flag_mode == 0: yield coords, return_axis_val[:,:,mask]
-            elif flag_mode == 1: yield coords, return_axis_val[:,:,mask], flag_axis_val[:,:,mask]
-            elif flag_mode == 2: yield coords, return_axis_val[:,:,mask][~flag_axis_val[:,:,mask]]
+
+            # apply masks to all return_axes
+            return_axes_val_m = {}
+            for return_axis in return_axes:
+                return_axes_val_m[return_axis] = return_axes_val[return_axis][:,:,mask]
+
+            yield coords, return_axes_val_m
 
 
     def set_val(self, coord, val, axis=''):
@@ -214,21 +216,104 @@ def unwrap_phase( x, window = 10, alpha = 0.01, iterations = 3,
 
 
 # TODO: what if reference antenna changes?
-def sol_filter(calt):
+def sol_filter_G(calt, window_ph = 60., window_amp = 0., order = 0, max_gap = 5.):
     """
-    Do complex filtering on solution tables
+    Do complex filtering on G Jones solution tables
     """
     ST = STobj(calt) 
     
-    for coord, val, flag in ST.get_val_iter(flag_mode=1):
-        # de-trend
-        scipy.signal.detrend
+    for coord, val in ST.get_val_iter(return_axes=['TIME','VAL','FLAG','ANTENNA2']):
 
-        # filtering
+        npol, nchan, __null = val['VAL'].shape
+        # check if the reference antenna is always the same
+        if not ( val['ANTENNA2'][0] == val['ANTENNA2'] ).all():
+            raise "Reference antenna changing!"
+
+        allamp = abs(val['VAL'])
+        allph = np.arctan2(np.imag( val['VAL'] ),np.real( val['VAL'] ))
+
+        # cycle across chan and polarizations
+        for pol in xrange(npol):
+            for chan in xrange(nchan):
+
+                # restrict to a pol/chan and remove flagged data
+                amp = allamp[pol][chan][~val['FLAG'][pol][chan]]
+                ph = allph[pol][chan][~val['FLAG'][pol][chan]]
+                time = val['TIME'][~val['FLAG'][pol][chan]]
+
+                # unwrap phases
+                ph = unwrap_phase( ph, alpha = 0.01 )
+                if ( np.nan == ph ).any:
+                    ph = unwrap_phase( ph, alpha = 0.001 )
+                if ( np.nan == ph ).any or max( np.fabs( ph ) ) > 1.e4:
+                    ph = np.unwrap( ph )
+        
+                # de-trend
+                ph -= smooth(ph, time, window = window_ph, order = order, max_gap = max_gap)
+                amp -= smooth(amp, time, window = window_amp, order = order, max_gap = max_gap)
+        
+                # filtering
+        
+        
+                # writing back
+                ST.set_val(coord, flag, axis='FLAG')
 
 
-        # writing back
-        ST.set_val(coord, flag, axis='FLAG')
+def smooth(data, times, window = 60., order = 0, max_gap = 5. ):
+    """
+    Remove a trend from the data
+    window: in seconds, sliding phase window dimension
+    order: 0: remove avg, 1: remove linear, 2: remove cubic
+    max_gap: maximum allawed gap in minutes
+
+    return: detrendized data array
+    """
+    
+    final_data = np.copy(data)
+
+    # loop over solution times
+    for time in times:
+
+        # get data to smooth
+        sel = np.where( times - time <= window / ( 2. * 24. * 60. * 60. ) )
+        data_array = data[sel]
+        data_offsets = times - time
+
+        # check for big gaps in data
+        if ( len( data_offsets ) > 1 ):
+          ddata_offsets = data_offsets[ 1 : ] - data_offsets[ : -1 ]
+          sel = np.where( ddata_offsets * 24. * 60. > max_gap )
+          if ( len( sel ) > 0 ):
+            min_data_index = 0
+            max_data_index = len( data_offsets )
+            data_index = np.where( abs( data_offsets ) == abs( data_offsets ).min() )[ 0, 0 ]
+            for s in sel:
+              if ( s[ 0 ] < data_index ):
+                min_data_index = s[ 0 ] + 1
+              if ( s[ 0 ] >= data_index ):
+                max_data_index = s[ 0 ] + 1
+                break
+            data_array = data_array[ min_data_index : max_data_index ]
+            data_offsets = data_offsets[ min_data_index : max_data_index ]
+
+        # smooth
+        if len( data_array ) > 0:
+          dim = min( len( data_array ) - 1, order )
+          if ( dim == 0 ):
+            smooth_data = np.median( data_array )
+          else:
+            P = zeros( ( len( data_offsets ), dim + 1 ), dtype = data_offsets.dtype )
+            P[ : , 0 ] = 1.
+            if ( dim >= 1 ):
+                P[ : , 1 ] = phase_offsets
+            if ( dim >= 2 ):
+                P[ : , 2 ] = phase_offsets**2
+            Pt = transpose( P )
+            smooth_data = dot( linalg.inv( dot( Pt, P ) ), dot( Pt, data_array ) )[ 0 ]
+          n = np.where( time_array == time )[ 0, 0 ]
+          final_data[n] = smooth_data[n]
+        
+    return final_data
 
 
 def plot_cal_table(calt, MS):
