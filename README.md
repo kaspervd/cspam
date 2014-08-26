@@ -1,11 +1,20 @@
-<<<<<<< HEAD
-cspam
-=====
+C-SPAM - version: 0.1
 
-CASA SPAM
-=======
-GMRTpip
-=======
+Low-frequency data reduction pipeline to be run into CASA
 
-GMRT CASA pipeline
->>>>>>> 3be81042f1eb7699350162a9f591d50b7493a787
+########################################################
+Copyright (C) 2014 - Francesco de Gasperin - Huib Intema
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA

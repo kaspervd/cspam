@@ -63,7 +63,7 @@ class STobj():
     def get_col(self, colname=''):
         """
         Return: list of colname column content
-        colnames = VAL, ERR, TIME, FLAG, ANT, SPW, SCAN
+        non-default colnames = VAL, ERR, ANT, SPW, SCAN
         """
         tb.open(self.file_name)
         if colname == 'VAL':
@@ -76,10 +76,11 @@ class STobj():
                 val = tb.getcol('FPARMERR')
             else:
                 val = tb.getcol('CPARMERR')
-        elif colname == 'FLAG':
-            val = tb.getcol('FLAG')
         elif colname == 'TIME':
             val = tb.getcol('TIME')
+            u = tb.getcolkeywords('TIME')['QuantumUnits'][0]
+            if u != 's':
+                val = qa.getvalue(qa.convert(qa.quantity(val, u), 's'))
         elif colname == 'SPW':
             val = tb.getcol('SPECTRAL_WINDOW_ID')
         elif colname == 'SCAN':
@@ -91,6 +92,34 @@ class STobj():
         
         tb.close()
         return val
+
+    def put_col(self, colname, val):
+        """
+        Set a column value
+        non-default colnames = VAL, ERR, ANT, SPW, SCAN
+        """
+        tb.open(self.file_name, nomodify=False)
+        if colname == 'VAL':
+            if self.st_type == 'K Jones':
+                val = tb.putcol('FPARAM', val)
+            else:
+                val = tb.putcol('CPARAM', val)
+        elif colname == 'ERR':
+            if self.st_type == 'K Jones':
+                val = tb.putcol('FPARMERR', val)
+            else:
+                val = tb.putcol('CPARMERR', val)
+        elif colname == 'SPW':
+            val = tb.putcol('SPECTRAL_WINDOW_ID', val)
+        elif colname == 'SCAN':
+            val = tb.putcol('SCAN_NUMBER', val)
+        elif colname == 'ANT':
+            val = tb.putcol('ANTENNA1', val)
+        else:
+            val = tb.putcol(colname, val)
+        
+        tb.close()
+
 
 #    def get_val_arr(self, antenna=[], spw=[], scan=[], pol=[]):
 #        """
@@ -159,13 +188,23 @@ class STobj():
             yield coords, return_axes_val_m
 
 
-    def set_val(self, coord, val, axis=''):
+    def put_val(self, coord, val, axis=''):
         """
         Set the subset of the "axis" column identified with coords (a dict as returned by get_val_iter)
         coord: a dict as returned by get_val_iter
         val: the values
-        axis: the col name (e.g. FLAG)
+        axis: the col name (e.g. FLAG, VAL)
         """
+        # fetch the whole column
+        val_all = self.get_col(axis)
+        # create a mask to update only selected coords
+        mask = np.zeros(shape = val_all.shape )
+        for c, cval in coord.iteritems():
+            mask[ np.where( self.get_col(c) == cval ) ] = 1
+            
+        # update the new values    
+        val_all[mask] = val
+        self.put_col(axis, val_all)
 
 
     def get_min_max(self, aptype = 'a'):
@@ -190,56 +229,66 @@ def unwrap_phase( x, window = 10, alpha = 0.01, iterations = 3,
 
     if len(x) < 2*window: return np.unwrap(x)
 
-    xx = array( x, dtype = float64 )
-#   a = zeros( ( window ), dtype = float64 )
+    xx = np.array( x, dtype = np.float64 )
+#   a = zeros( ( window ), dtype = np.float64 )
 #   a[ -1 ] = 1.
     if ( len( clip_range ) == 2 ):
         o = clip_range[ 0 ]
         s = ( clip_range[ 1 ] - clip_range[ 0 ] ) / 90.
-    a = ones( ( window ), dtype = float64 ) / float( window )
+    a = np.ones( ( window ), dtype = np.float64 ) / float( window )
     xs = xx[ 0 ]
     for j in range( 2 * iterations ):
         for k in range( window, len( x ) ): 
             xi = xx[ k - window : k ]
-            xp = dot( xi, a )
+            xp = np.dot( xi, a )
             e = xx[ k ] - xp
-            e = amodulo( e + 180., 360. ) - 180.
+            e = np.mod( e + 180., 360. ) - 180.
             if ( len( clip_range ) == 2 ):
                 if ( abs( e ) > o ):
                     e = sign( e ) * ( s * degrees( atan( radians( ( abs( e ) - o ) / s ) ) ) + o )  
             xx[ k ] = xp + e
 #           a = a + xx[ k - window : k ] * alpha * e / 360.
-            a = a + xi * alpha * e / ( dot( xi, xi ) + 1.e-6 )
+            a = a + xi * alpha * e / ( np.dot( xi, xi ) + 1.e-6 )
         xx = xx[ : : -1 ].copy()
     xx = xx - xx[ 0 ] + xs 
     return xx
 
 
 # TODO: what if reference antenna changes?
-def sol_filter_G(calt, window_ph = 60., window_amp = 0., order = 0, max_gap = 5.):
+def sol_filter_G(calt, window_ph = 60., window_amp = 60., order = 1, max_gap = 5.,
+    max_ncycles = 10, max_rms_amp = 3., max_rms_ph=3.):
     """
     Do complex filtering on G Jones solution tables
+    return:
+    dict with rms values. Dict is inexed by a tuple of (scan, ant, spw, pol, chan)
     """
     ST = STobj(calt) 
-    
-    for coord, val in ST.get_val_iter(return_axes=['TIME','VAL','FLAG','ANTENNA2']):
+    rms_dict = {}
+
+    for coord, val in ST.get_val_iter(return_axes=['TIME','VAL','FLAG','ANTENNA2'],
+        iter_axes=['SCAN_NUMBER', 'SPECTRAL_WINDOW_ID', 'ANTENNA1']):
 
         npol, nchan, __null = val['VAL'].shape
         # check if the reference antenna is always the same
         if not ( val['ANTENNA2'][0] == val['ANTENNA2'] ).all():
             raise "Reference antenna changing!"
 
-        allamp = abs(val['VAL'])
+        allamp = np.log10(abs(val['VAL'])) # amp in log so to have gaussian noise
         allph = np.arctan2(np.imag( val['VAL'] ),np.real( val['VAL'] ))
+        new_flag = np.copy(val['FLAG'])
 
         # cycle across chan and polarizations
         for pol in xrange(npol):
             for chan in xrange(nchan):
 
+                print "working on pol "+str(pol)+" - chan "+str(chan)
+                print coord
+
                 # restrict to a pol/chan and remove flagged data
-                amp = allamp[pol][chan][~val['FLAG'][pol][chan]]
-                ph = allph[pol][chan][~val['FLAG'][pol][chan]]
-                time = val['TIME'][~val['FLAG'][pol][chan]]
+                flag = val['FLAG'][pol][chan]
+                amp = allamp[pol][chan][~flag]
+                ph = allph[pol][chan][~flag]
+                time = val['TIME'][~flag]
 
                 # unwrap phases
                 ph = unwrap_phase( ph, alpha = 0.01 )
@@ -248,18 +297,21 @@ def sol_filter_G(calt, window_ph = 60., window_amp = 0., order = 0, max_gap = 5.
                 if ( np.nan == ph ).any or max( np.fabs( ph ) ) > 1.e4:
                     ph = np.unwrap( ph )
         
-                # de-trend
-                ph -= smooth(ph, time, window = window_ph, order = order, max_gap = max_gap)
-                amp -= smooth(amp, time, window = window_amp, order = order, max_gap = max_gap)
-        
                 # filtering
-        
-        
-                # writing back
-                ST.set_val(coord, flag, axis='FLAG')
+                new_flag[pol][chan][~flag], rms_amp = outlier_rej(amp, time, max_ncycles, max_rms_amp, window_amp, order, max_gap)
+                new_flag[pol][chan][~flag], rms_ph  = outlier_rej(ph, time, max_ncycles, max_rms_ph, window_ph, order, max_gap)
+
+                # creating return dict (scan, ant, spw, pol, chan)
+                rms_dict[tuple(['amp'] + [c for col, c in coord.iteritems()] + [pol] + [chan])] = np.sum(rms_amp)
+                rms_dict[tuple(['ph'] + [c for col, c in coord.iteritems()] + [pol] + [chan])] = np.sum(rms_ph)
+
+        # writing back
+        ST.put_val(coord, new_flag, axis='FLAG')
+
+    return rms_dict
 
 
-def smooth(data, times, window = 60., order = 0, max_gap = 5. ):
+def smooth(data, times, window = 60., order = 1, max_gap = 5. ):
     """
     Remove a trend from the data
     window: in seconds, sliding phase window dimension
@@ -274,47 +326,99 @@ def smooth(data, times, window = 60., order = 0, max_gap = 5. ):
     # loop over solution times
     for time in times:
 
-        # get data to smooth
-        sel = np.where( times - time <= window / ( 2. * 24. * 60. * 60. ) )
-        data_array = data[sel]
-        data_offsets = times - time
+        # get data to smooth (values inside the time window)
 
-        # check for big gaps in data
+        data_array = data[ np.where( abs(times - time) <= window / 2. ) ]
+        data_offsets = times[ np.where( abs(times - time) <= window / 2. ) ] - time
+
+        # check and remove big gaps in data
         if ( len( data_offsets ) > 1 ):
           ddata_offsets = data_offsets[ 1 : ] - data_offsets[ : -1 ]
-          sel = np.where( ddata_offsets * 24. * 60. > max_gap )
+          sel = np.where( ddata_offsets > max_gap * 60. )[0]
           if ( len( sel ) > 0 ):
             min_data_index = 0
             max_data_index = len( data_offsets )
-            data_index = np.where( abs( data_offsets ) == abs( data_offsets ).min() )[ 0, 0 ]
+            this_time_index = np.where( abs( data_offsets ) == abs( data_offsets ).min() )[0]
+            # find min and max good indexes for this window
             for s in sel:
-              if ( s[ 0 ] < data_index ):
-                min_data_index = s[ 0 ] + 1
-              if ( s[ 0 ] >= data_index ):
-                max_data_index = s[ 0 ] + 1
+              if ( s < this_time_index ):
+                min_data_index = s + 1
+              if ( s >= this_time_index ):
+                max_data_index = s + 1
                 break
+            # redefine data arrays
             data_array = data_array[ min_data_index : max_data_index ]
             data_offsets = data_offsets[ min_data_index : max_data_index ]
 
         # smooth
-        if len( data_array ) > 0:
-          dim = min( len( data_array ) - 1, order )
+        if len( data_array ) > 1:
+          dim = min( len( data_array ) - 2, order )
           if ( dim == 0 ):
             smooth_data = np.median( data_array )
           else:
-            P = zeros( ( len( data_offsets ), dim + 1 ), dtype = data_offsets.dtype )
+            P = np.zeros( ( len( data_offsets ), dim + 1 ), dtype = data_offsets.dtype )
             P[ : , 0 ] = 1.
             if ( dim >= 1 ):
-                P[ : , 1 ] = phase_offsets
+                P[ : , 1 ] = data_offsets
             if ( dim >= 2 ):
-                P[ : , 2 ] = phase_offsets**2
-            Pt = transpose( P )
-            smooth_data = dot( linalg.inv( dot( Pt, P ) ), dot( Pt, data_array ) )[ 0 ]
-          n = np.where( time_array == time )[ 0, 0 ]
-          final_data[n] = smooth_data[n]
+                P[ : , 2 ] = data_offsets**2
+            Pt = np.transpose( P )
+            smooth_data = np.dot( np.linalg.inv( np.dot( Pt, P ) ), np.dot( Pt, data_array ) )[ 0 ]
+          n = np.where( times == time )[0]
+          final_data[n] = smooth_data
         
     return final_data
 
+
+def outlier_rej(val, time, max_ncycles = 10, max_rms = 3., window = 60., order = 1, max_gap = 5.):
+    """
+    Reject outliers using a running median
+    val = the array (avg must be 0)
+    max_ncycles = maximum number of cycles
+    max_rms = number of rms times for outlier flagging
+    return: flags array and final rms
+    """
+    flags = np.zeros(shape=val.shape, dtype=np.bool)
+    val_detrend = np.zeros(shape=val.shape)
+
+    # DEBUG plotting
+    #import matplotlib.pyplot as plt
+    #import matplotlib.cm as cm
+    #colors = iter(cm.rainbow(np.linspace(0, 1, max_ncycles)))
+    #plt.plot( time[~flags], val[~flags], 'o-', color='k' )
+
+    for i in xrange(max_ncycles):
+        
+        # smoothing (input with no flags!)
+        val_smoothed = smooth(val[~flags], time[~flags], window, order, max_gap)
+        val_detrend[~flags] = val[~flags] - val_smoothed
+
+        # DEBUG plotting
+        #color = next(colors)
+        #plt.plot( time[~flags], val_smoothed, 'x:', label=str(i), color=color )
+
+        # median calc
+        rms =  1.4826 * np.median(abs(val_detrend[~flags]))
+
+        # rejection  
+        flags[ ~flags ] = np.logical_or(flags[~flags], abs(val_detrend[~flags]) > max_rms * rms )
+
+        # DEBUG plotting
+        #plt.plot( time[ flags ], val[ flags ], '*', markersize=20, color=color )
+
+        if (flags == True).all():
+            rms == 0.
+            break
+            
+        # median calc
+        this_rms =  1.4826 * np.median(abs(val_detrend[~flags]))
+        if rms - this_rms == 0.:
+            break
+
+    # DEBUG plotting
+    #plt.legend()
+    #plt.show()
+    return flags, rms
 
 def plot_cal_table(calt, MS):
     """
