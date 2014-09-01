@@ -314,7 +314,7 @@ def sol_filter_G(calt, window_ph = 60., window_amp = 60., order = 1, max_gap = 5
 def smooth(data, times, window = 60., order = 1, max_gap = 5. ):
     """
     Remove a trend from the data
-    window: in timestamps, sliding phase window dimension
+    window: in sec, sliding phase window dimension
     order: 0: remove avg, 1: remove linear, 2: remove cubic
     max_gap: maximum allawed gap in minutes
 
