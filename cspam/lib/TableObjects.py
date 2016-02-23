@@ -1,3 +1,13 @@
+# Description:
+# ------------
+# This file contains two classes that deal with CASA tables:
+# MSObj (Measurement Set Object) and STObj (Solution Table Object).
+# 
+# These classes come originally from cspam version 0.1 by Francesco
+# de Gasperin and Huib Intema. Edited by Kasper van Dam.
+#
+# These objects rely heavily on the CASA environment.
+
 import logging
 import numpy as np
 import casa, casac
@@ -156,7 +166,7 @@ class MSObj:
             dir = ms.getfielddirmeas(fieldid=int(cal_field_id))
             # if distance with known cal is < than 60" then add it
             for known_cal, known_cal_dir in known_cals.iteritems():
-                if  au.angularSeparationOfDirectionsArcsec(dir, known_cal_dir) <= 60:
+                if  True: #au.angularSeparationOfDirectionsArcsec(dir, known_cal_dir) <= 60:
                     if cal_scan_id not in usr_cal_scan_ids and usr_cal_scan_ids != ['']:
                          # user do not want this scan
                          logging.info('Found '+known_cal+' in scan: '+cal_scan_id+' *** Ignored')
