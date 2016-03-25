@@ -10,26 +10,54 @@
 
 import logging
 import numpy as np
-import casa, casac
+#import casa, casac
+
+"""
+# The following is needed to run this outside the CASA
+# environment, apparently CASA doesn't let you import
+# modules while maintaining CASA functionalitites within these modules
+# and I want this to be a submodule of the main code. 
+casapath = '/software/casa/casa-release-4.5.2-el6/'
+import os
+import sys
+sys.path.insert(0,casapath+'lib/python2.7/') # contains all tasks
+# sys.path.insert(0,casapath+'lib/python2.7/site-packages')
+# the above path contains all casa approved 3rd party modules
+# use system python installation instead.
+sys.path.insert(0,casapath+'lib/python2.7/__casac__') # contains all toolkits
+sys.path.insert(0,casapath+'xml/')
+from __casac__ import ms
+ms = ms.ms() # We need an instance of ms
+#
+# End of this hacky work-around
+"""
 
 class MSObj:
     """
     Class used to provide information on MSs
     """
-    def __init__(self, conf):
-        self.file_name = conf['file_name']
+    def __init__(self, conf, name):
+        self.file_path = conf['file_path']
+        self.ms_name = name.replace('.ms','')
+        self.ms_name = self.ms_name.replace('.MS','')
 
         # save summary info which are often used
-        ms.open(self.file_name)
+        ms.open(self.file_path)
         self.summary = ms.summary()
         self.scansummary = ms.getscansummary()
         ms.close()
 
-        self.dir_img = self.file_name.replace('.MS','')+'-img/'
+        self.dir_img = self.file_path.replace('.ms','')
+        self.dir_img = self.dir_img.replace('.MS','')
+        self.dir_img = self.dir_img+'-img'
+        
         # annoying workaround to keep caltables in the same dir of MSs, so plotcal works
-        self.dir_cal = os.path.dirname(self.file_name) 
-        #self.dir_cal = self.file_name.replace('.MS','')+'-cal/'
-        self.dir_plot = self.file_name.replace('.MS','')+'-plot/'
+        self.dir_cal = os.path.dirname(self.file_path) 
+        #self.dir_cal = self.file_path.replace('.MS','')+'-cal/'
+        
+        self.dir_plot = self.file_path.replace('.ms','')
+        self.dir_plot = self.dir_plot.replace('.MS','')
+        self.dir_plot = self.dir_plot+'-plot'
         self.minBL_for_cal = self.get_minBL_for_cal()
         self.nchan = self.get_nchan()
         self.freq = self.get_freq()
@@ -51,9 +79,9 @@ class MSObj:
         """
         Return: the number of channels
         """
-        LocTb = casa.table
-        LocTb.open(self.file_name+'/SPECTRAL_WINDOW')
-        nchan = LocTb.getcol('NUM_CHAN')[0]
+        #LocTb = casa.table
+        tb.open(self.file_path+'/SPECTRAL_WINDOW')
+        nchan = tb.getcol('NUM_CHAN')[0]
         tb.close()
         return nchan
 
@@ -61,10 +89,10 @@ class MSObj:
         """
         Return: the telscope name
         """
-        LocTb = casa.table
-        LocTb.open(self.file_name+'/OBSERVATION')
-        telescope = LocTb.getcol('TELESCOPE_NAME')[0]
-        LocTb.close()
+        #LocTb = casa.table
+        tb.open(self.file_path+'/OBSERVATION')
+        telescope = tb.getcol('TELESCOPE_NAME')[0]
+        tb.close()
         return telescope
 
     def get_band(self):
@@ -79,29 +107,26 @@ class MSObj:
             if self.freq < 200e6: return '151'
         elif self.telescope == 'EVLA':
             if self.freq < 1e9: return 'P'
-            if self.freq > 1e9: return 'L'
+            if self.freq >= 1e9: return 'L'
 
     def get_freq(self):
         """
         Return: the reference frequency
         """
-        LocTb = casa.table
-        tb.open(self.file_name+'/SPECTRAL_WINDOW')
+        #LocTb = casa.table
+        tb.open(self.file_path+'/SPECTRAL_WINDOW')
         freq = tb.getcol('REF_FREQUENCY')[0]
         tb.close()
-        LocTb.close()
-        del LocTb
         return freq
 
     def get_antenna_names(self):
         """
         Retrun: list of antenna names
         """
-        LocTb = casa.table
-        LocTb.open( '%s/ANTENNA' % self.file_name)
-        antenna_names = LocTb.getcol( 'NAME' )
-        LocTb.close()
-        del LocTb
+        #LocTb = casa.table
+        tb.open( '%s/ANTENNA' % self.file_path)
+        antenna_names = tb.getcol( 'NAME' )
+        tb.close()
         return antenna_names
 
     def get_minBL_for_cal(self):
@@ -157,7 +182,7 @@ class MSObj:
                 'type': 'direction'}
         }
         
-        ms.open(self.file_name)
+        ms.open(self.file_path)
         cal_scan_ids = []
         cal_field_ids = []
         cal_scan_ids_unwanted = []
@@ -177,11 +202,11 @@ class MSObj:
                         cal_field_ids.append(str(cal_field_id))
 
                     # update field name for SetJy
-                    tb.open('%s/FIELD' % self.file_name, nomodify=False)
+                    tb.open('%s/FIELD' % self.file_path, nomodify=False)
                     tb.putcell('NAME', int(cal_field_id), known_cal)
                     source_id = tb.getcell('SOURCE_ID', int(cal_field_id))
                     tb.close()
-                    tb.open('%s/SOURCE' % self.file_name, nomodify=False)
+                    tb.open('%s/SOURCE' % self.file_path, nomodify=False)
                     tb.putcell('NAME', source_id, known_cal)
                     tb.close()
 
@@ -269,15 +294,15 @@ class STObj:
     """
     Class used to provide information on Solution Tables
     """
-    def __init__(self, file_name):
-        self.file_name = file_name
+    def __init__(self, file_path):
+        self.file_path = file_path
         self.st_type = self.get_type()
 
     def get_type(self):
         """
         Return the Cal Table type
         """
-        tb.open(self.file_name)
+        tb.open(self.file_path)
         st_type = tb.getkeyword('VisCal')
         tb.close()
         return st_type
@@ -286,7 +311,7 @@ class STObj:
         """
         Retrun: list of antenna names
         """
-        tb.open( '%s/ANTENNA' % self.file_name)
+        tb.open( '%s/ANTENNA' % self.file_path)
         antenna_names = tb.getcol( 'NAME' )
         tb.close()
         return antenna_names
@@ -295,7 +320,7 @@ class STObj:
         """
         Return: list of antenna coords
         """
-        tb.open( '%s/ANTENNA' % self.file_name)
+        tb.open( '%s/ANTENNA' % self.file_path)
         antenna_pos = tb.getcol( 'POSITION' )
         tb.close()
         return antenna_pos
@@ -310,7 +335,7 @@ class STObj:
         Return: list of colname column content
         non-default colnames = VAL, ERR, ANT, SPW, SCAN
         """
-        tb.open(self.file_name)
+        tb.open(self.file_path)
         if colname == 'VAL':
             if self.st_type == 'K Jones':
                 val = tb.getcol('FPARAM')
@@ -343,7 +368,7 @@ class STObj:
         Set a column value
         non-default colnames = VAL, ERR, ANT, SPW, SCAN
         """
-        tb.open(self.file_name, nomodify=False)
+        tb.open(self.file_path, nomodify=False)
         if colname == 'VAL':
             if self.st_type == 'K Jones':
                 val = tb.putcol('FPARAM', val)
