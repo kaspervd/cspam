@@ -4,49 +4,70 @@
 # MSObj (Measurement Set Object) and STObj (Solution Table Object).
 # 
 # These classes come originally from cspam version 0.1 by Francesco
-# de Gasperin and Huib Intema. Edited by Kasper van Dam.
+# de Gasperin and Huib Intema. Edited by Kasper van Dam, 2016.
 #
 # These objects rely heavily on the CASA environment.
 
 import logging
 import numpy as np
-#import casa, casac
-
-"""
-# The following is needed to run this outside the CASA
-# environment, apparently CASA doesn't let you import
-# modules while maintaining CASA functionalitites within these modules
-# and I want this to be a submodule of the main code. 
-casapath = '/software/casa/casa-release-4.5.2-el6/'
+import casac
 import os
-import sys
-sys.path.insert(0,casapath+'lib/python2.7/') # contains all tasks
-# sys.path.insert(0,casapath+'lib/python2.7/site-packages')
-# the above path contains all casa approved 3rd party modules
-# use system python installation instead.
-sys.path.insert(0,casapath+'lib/python2.7/__casac__') # contains all toolkits
-sys.path.insert(0,casapath+'xml/')
-from __casac__ import ms
-ms = ms.ms() # We need an instance of ms
-#
-# End of this hacky work-around
-"""
+
+ms = casac.casac.ms()
+tb = casac.casac.table()
 
 class MSObj:
     """
-    Class used to provide information on MSs
+    The MSObj class provides information on CASA Measurement Sets
+
+    Available instance attributes:
+    ------------------------------
+    name                    type   info
+
+    file_path             - str  -
+    ms_name               - str  -
+    summary               - dict -
+    scansummary           - dict - 
+    dir_img               - str  -
+    dir_cal               - str  -
+    dir_plot              - str  -
+    minBL_for_cal         -
+    nchan                 -
+    freq                  -
+    telescope             - str
+    band                  -
+    spw                   -
+    central_chans         -
+    flag                  -
+    cal_scan_ids          -
+    cal_field_ids         -
+    cal_scan_ids_unwanted -
+    tgt_scan_dict         -
+    uvrange               - str
+
+    Available public methods:
+    -------------------------
+    get_field_name_from_field_id(field):
+    
+    get_field_name_from_scan_id(scan):
+    
+    get_field_id_from_scan_id(scan):
+    
     """
+
     def __init__(self, conf, name):
+        # Names and paths
         self.file_path = conf['file_path']
         self.ms_name = name.replace('.ms','')
         self.ms_name = self.ms_name.replace('.MS','')
 
-        # save summary info which are often used
+        # Measurement set summaries
         ms.open(self.file_path)
         self.summary = ms.summary()
         self.scansummary = ms.getscansummary()
         ms.close()
 
+        # MS reduction related directories
         self.dir_img = self.file_path.replace('.ms','')
         self.dir_img = self.dir_img.replace('.MS','')
         self.dir_img = self.dir_img+'-img'
@@ -58,24 +79,51 @@ class MSObj:
         self.dir_plot = self.file_path.replace('.ms','')
         self.dir_plot = self.dir_plot.replace('.MS','')
         self.dir_plot = self.dir_plot+'-plot'
-        self.minBL_for_cal = self.get_minBL_for_cal()
-        self.nchan = self.get_nchan()
-        self.freq = self.get_freq()
-        self.telescope = self.get_telescope()
+        
+        # Minimum number of baselines
+        self.minBL_for_cal = self._get_minBL_for_cal()
+        
+        # Number of channles
+        self.nchan = self._get_nchan()
+        
+        # Frequency
+        self.freq = self._get_freq()
+        
+        # Telescope
+        self.telescope = self._get_telescope()
         assert self.telescope == 'GMRT' or self.telescope == 'EVLA'
-        self.band = self.get_band()
+        
+        # Band
+        self.band = self._get_band()
+        
+        # Spectral windows
         self.spw = conf['spw']
+        
+        # Channels
         central_nchan = self.nchan*conf['central_chan_percentage']/100.
         self.central_chans = str(int(round(self.nchan/2.-central_nchan/2.))) + '~' + str(int(round(self.nchan/2.+central_nchan/2.)))
 
-        self.flag = self.set_flag(conf['flag']) # manual flag to be used with flagdata command
-        self.set_cal_scan_ids(conf['cal_scans']) # sets cal_scan_ids cal_scan_names and cal_scan_unwanted
-        self.tgt_scan_dict = self.set_tgt_scan_dict(conf['tgt_scans']) # dict of cal scans contining groups of relative cal+tgt scans
+        # Flags
+        self.flag = self._convert_flag(conf['flag']) # manual flag to be used with flagdata command
+
+        # Scan and field ids
+        ids = self._determine_cal_scan_ids(conf['cal_scans'])
+        self.cal_scan_ids = ids[0]
+        self.cal_field_ids = ids[1]
+        self.cal_scan_ids_unwanted = ids[2]
+
+        # Target scans
+        self.tgt_scan_dict = self._determine_tgt_scan_dict(conf['tgt_scans']) # dict of cal scans contining groups of relative cal+tgt scans
         
+        # UV range
         if self.telescope == 'GMRT': self.uvrange = '>1000m'
         if self.telescope == 'EVLA': self.uvrange = ''
 
-    def get_nchan(self):
+
+    # Private Methods
+    # (actually private methods don't exist in Python, the _ is a convention)
+
+    def _get_nchan(self):
         """
         Return: the number of channels
         """
@@ -85,7 +133,7 @@ class MSObj:
         tb.close()
         return nchan
 
-    def get_telescope(self):
+    def _get_telescope(self):
         """
         Return: the telscope name
         """
@@ -95,7 +143,7 @@ class MSObj:
         tb.close()
         return telescope
 
-    def get_band(self):
+    def _get_band(self):
         """
         Return telescope band
         """
@@ -109,7 +157,7 @@ class MSObj:
             if self.freq < 1e9: return 'P'
             if self.freq >= 1e9: return 'L'
 
-    def get_freq(self):
+    def _get_freq(self):
         """
         Return: the reference frequency
         """
@@ -119,7 +167,7 @@ class MSObj:
         tb.close()
         return freq
 
-    def get_antenna_names(self):
+    def _get_antenna_names(self):
         """
         Retrun: list of antenna names
         """
@@ -129,14 +177,14 @@ class MSObj:
         tb.close()
         return antenna_names
 
-    def get_minBL_for_cal(self):
+    def _get_minBL_for_cal(self):
         """
         Return: estimate the minimum BL for calibration steps
         """
-        num_antenna = len(self.get_antenna_names())
+        num_antenna = len(self._get_antenna_names())
         return max(3,int(num_antenna/4.0))
 
-    def set_flag(self, flag_string=''):
+    def _convert_flag(self, flag_string=''):
         """
         Convert flag command from the config file to a casa command
         e.g.: C14,E03,E04,S01,W01=; =22:30:00~22:43:00; C03=22:52:30~22:55:30
@@ -150,7 +198,7 @@ class MSObj:
             
         return flag
 
-    def set_cal_scan_ids(self, usr_cal_scan_ids=['']):
+    def _determine_cal_scan_ids(self, usr_cal_scan_ids=['']):
         """
         Save the calibrator scans in a list
         If empy list given, then check for coords
@@ -217,12 +265,12 @@ class MSObj:
             logging.critical('No calibrators found')
             sys.exit(1)
 
-        self.cal_scan_ids = cal_scan_ids
-        self.cal_field_ids = list(set(cal_field_ids))
-        self.cal_scan_ids_unwanted = cal_scan_ids_unwanted
+        #self.cal_scan_ids = cal_scan_ids
+        #self.cal_field_ids = list(set(cal_field_ids))
+        #self.cal_scan_ids_unwanted = cal_scan_ids_unwanted
+        return cal_scan_ids, list(set(cal_field_ids)), cal_scan_ids_unwanted
 
-
-    def set_tgt_scan_dict(self, usr_tgt_scan_ids=['']):
+    def _determine_tgt_scan_dict(self, usr_tgt_scan_ids=['']):
         """
         Set the target scans in a dict associating each calibrator to the closest in time {cal1:[tgt1,tgt2],cal2:[tgt3]}
         if tgt_scans is given, then restrict to those scans
@@ -266,6 +314,8 @@ class MSObj:
 
         return tgt_scans_dict
 
+
+    # Public Methods
 
     def get_field_name_from_field_id(self, field):
         """

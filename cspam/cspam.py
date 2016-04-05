@@ -3,19 +3,24 @@ import os
 import numpy as np
 import logging
 import ConfigParser
-import inspect
 
-"""
+from casat import gencal
+from casat import flagdata
+from casat import flagmanager
+from casat import gaincal
+
+#import inspect
+
 # Make sure that lib can be imported (module from a relative path)
-cmd_folder = os.path.realpath(os.path.abspath(os.path.split(inspect.getfile( inspect.currentframe() ))[0]))
-if cmd_folder not in sys.path:
-    sys.path.insert(0, cmd_folder)
+#cmd_folder = os.path.realpath(os.path.abspath(os.path.split(inspect.getfile( inspect.currentframe() ))[0]))
+#if cmd_folder not in sys.path:
+#    sys.path.insert(0, cmd_folder)
 
 from lib import AntennaObjects
 from lib import TableObjects
 from lib import utils
-"""
 
+'''
 # This above only works if you import casa functionalities separately in the
 # above files. Somewhat ugly but it seems to work.
 # Otherwise use:
@@ -24,6 +29,7 @@ execfile('/home/kvdam/Documents/MA-project-2/cspam/cspam/lib/AntennaObjects.py')
 
 execfile('/home/kvdam/Documents/MA-project-2/cspam/cspam/lib/TableObjects.py')
 # Contains classes: MSObj, STObj
+'''
 
 def get_conf(config_file='/home/kvdam/Documents/MA-project-2/cspam/cspam/cspam.config'):
     """
@@ -71,7 +77,7 @@ print ' '
 # creating the list of MSs and setting some specific values (as flags)
 MSs = []
 for MS in conf['MSs']:
-    MSs.append( MSObj(conf[MS], MS))
+    MSs.append( TableObjects.MSObj(conf[MS], MS))
 
 
 ###
@@ -81,18 +87,41 @@ for MS in conf['MSs']:
 # In this test case we only have one measurement set
 mset = MSs[0]
 
+print type(mset.file_path)
+print type(mset.ms_name)
+print type(mset.summary)
+print type(mset.scansummary)
+print type(mset.dir_img)
+print type(mset.dir_plot)
+print type(mset.dir_cal)
+print type(mset.minBL_for_cal)
+print type(mset.nchan)
+print type(mset.freq)
+print type(mset.telescope)
+print type(mset.band)
+print type(mset.spw)
+print type(mset.central_chans)
+print type(mset.flag)
+print type(mset.cal_scan_ids)
+print type(mset.cal_field_ids)
+print type(mset.cal_scan_ids_unwanted)
+print type(mset.tgt_scan_dict)
+print type(mset.telescope)
+print type(mset.uvrange)
+
+"""
 #
 # Antenna position correction
 #
-gencal(vis=mset.file_path, caltable=mset.dir_cal+'/'+mset.ms_name+'.pos', 
+gencal.gencal(vis=mset.file_path, caltable=mset.dir_cal+'/'+mset.ms_name+'.pos', 
        caltype='antpos')
 
 #
 # Flagging (first chan, quack, bad ant, bad time)
 #
-flagdata(vis=mset.file_path, mode='manual', # from tutorial
+flagdata.flagdata(vis=mset.file_path, mode='manual', # from tutorial
          antenna='ea06,ea17,ea20,ea26')
-flagdata(vis=mset.file_path, mode='shadow', # from tutorial
+flagdata.flagdata(vis=mset.file_path, mode='shadow', # from tutorial
          flagbackup=False)
 
 #spw = '0:0'
@@ -106,30 +135,30 @@ flagdata(vis=mset.file_path, mode='shadow', # from tutorial
 #		timerange=badranges[badant], flagbackup=False)
 
 # quack
-flagdata(vis=mset.file_path, mode='quack', quackinterval=1, quackmode='beg',
+flagdata.flagdata(vis=mset.file_path, mode='quack', quackinterval=1, quackmode='beg',
          action='apply', flagbackup=False)
     
 # flag zeros
-flagdata(vis=mset.file_path, mode='clip', clipzeros=True,\
+flagdata.flagdata(vis=mset.file_path, mode='clip', clipzeros=True,\
          correlation='ABS_ALL', action='apply', flagbackup=False)
     
 # save flag status
-flagmanager(vis=mset.file_path, mode='save',
+flagmanager.flagmanager(vis=mset.file_path, mode='save',
             versionname='AfterStaticFlagging')
 
 # First RFI removal
-flagdata(vis=mset.file_path, mode='tfcrop', datacolumn='data',
+flagdata.flagdata(vis=mset.file_path, mode='tfcrop', datacolumn='data',
          timecutoff = 4., freqcutoff = 3., maxnpieces = 7,\
          action='apply', flagbackup=False)
 
 # save flag status
-flagmanager(vis=mset.file_path, mode='save',
+flagmanager.flagmanager(vis=mset.file_path, mode='save',
             versionname='AfterDynamicFlagging')
 
 #
 # Just a quick test to create a cal table to test plotcal
 #
-gaincal(vis=mset.file_path,
+gaincal.gaincal(vis=mset.file_path,
         caltable=mset.dir_cal+'/'+mset.ms_name+'.initPh',
         intent='CALIBRATE_PHASE*', solint='int',
         spw='0:10~13,1;3;5~6:30~33,2:32~35,4:35~38,7:46~49',
@@ -146,3 +175,4 @@ gaincal(vis=mset.file_path,
 # Self Calibration
 
 # Imaging
+"""
