@@ -3,50 +3,27 @@ import os
 import numpy as np
 import logging
 import ConfigParser
-
-from casat import gencal
-from casat import flagdata
-from casat import flagmanager
-from casat import gaincal
-
-#import inspect
-
-# Make sure that lib can be imported (module from a relative path)
-#cmd_folder = os.path.realpath(os.path.abspath(os.path.split(inspect.getfile( inspect.currentframe() ))[0]))
-#if cmd_folder not in sys.path:
-#    sys.path.insert(0, cmd_folder)
+import argparse
 
 from lib import AntennaObjects
 from lib import TableObjects
 from lib import utils
+import steps
+import casac
 
-'''
-# This above only works if you import casa functionalities separately in the
-# above files. Somewhat ugly but it seems to work.
-# Otherwise use:
-execfile('/home/kvdam/Documents/MA-project-2/cspam/cspam/lib/AntennaObjects.py')
-# Contains classes: RefAntHeuristics, RefAntGeometry, RefAntFlagging
-
-execfile('/home/kvdam/Documents/MA-project-2/cspam/cspam/lib/TableObjects.py')
-# Contains classes: MSObj, STObj
-'''
-
-def get_conf(config_file='/home/kvdam/Documents/MA-project-2/cspam/cspam/cspam.config'):
+def get_conf(config_file='cspam.config'):
     """
     Prepare a config dictionary with all the user-defined parameters
     """
-
     if not os.path.isfile(config_file):
         logging.critical('Configuration file '+config_file+' not found.')
         sys.exit(1)
     
-    confP = ConfigParser.ConfigParser(
-		{'flag':'','cal_scans':'','tgt_scans':''})
+    confP = ConfigParser.ConfigParser()
     confP.read(config_file)
 
     conf = {}
     conf['steps'] = confP.get('DEFAULT','steps').replace(' ','').split(',')
-    conf['debug'] = confP.getint('DEFAULT','debug')
     conf['prog_dir'] = confP.get('DEFAULT','prog_dir')
     conf['data_dir'] = confP.get('DEFAULT','data_dir')
 
@@ -63,116 +40,91 @@ def get_conf(config_file='/home/kvdam/Documents/MA-project-2/cspam/cspam/cspam.c
         conf[MS]['spw'] = confP.get(MS, 'spw').replace(' ','')
         conf[MS]['central_chan_percentage'] = confP.getint(
 					      MS, 'central_chan_percentage')
-   
+    
     return conf
 
-print "Starting CSPAM version: x.x"
-
-# Print information on MSs
-conf = get_conf()
-print 'Imported conf file:'
-print conf
-print ' '
-
-# creating the list of MSs and setting some specific values (as flags)
-MSs = []
-for MS in conf['MSs']:
-    MSs.append( TableObjects.MSObj(conf[MS], MS))
-
-
-###
-### Below it's only testing
-###
-
-# In this test case we only have one measurement set
-mset = MSs[0]
-
-print type(mset.file_path)
-print type(mset.ms_name)
-print type(mset.summary)
-print type(mset.scansummary)
-print type(mset.dir_img)
-print type(mset.dir_plot)
-print type(mset.dir_cal)
-print type(mset.minBL_for_cal)
-print type(mset.nchan)
-print type(mset.freq)
-print type(mset.telescope)
-print type(mset.band)
-print type(mset.spw)
-print type(mset.central_chans)
-print type(mset.flag)
-print type(mset.cal_scan_ids)
-print type(mset.cal_field_ids)
-print type(mset.cal_scan_ids_unwanted)
-print type(mset.tgt_scan_dict)
-print type(mset.telescope)
-print type(mset.uvrange)
-
-"""
-#
-# Antenna position correction
-#
-gencal.gencal(vis=mset.file_path, caltable=mset.dir_cal+'/'+mset.ms_name+'.pos', 
-       caltype='antpos')
-
-#
-# Flagging (first chan, quack, bad ant, bad time)
-#
-flagdata.flagdata(vis=mset.file_path, mode='manual', # from tutorial
-         antenna='ea06,ea17,ea20,ea26')
-flagdata.flagdata(vis=mset.file_path, mode='shadow', # from tutorial
-         flagbackup=False)
-
-#spw = '0:0'
-#flagdata(vis=active_ms, mode='manualflag', spw=spw, flagbackup=False)
-
-#if badranges != {}:
-#        for badant in badranges:
-#            logging.debug("Flagging :"+badant+" - time: "+badranges[badant])
-#            default('flagdata')
-#            flagdata(vis=active_ms, mode='manualflag', antenna=badant,\
-#		timerange=badranges[badant], flagbackup=False)
-
-# quack
-flagdata.flagdata(vis=mset.file_path, mode='quack', quackinterval=1, quackmode='beg',
-         action='apply', flagbackup=False)
+def parseCommandLineArguments():
+    """
+    Set up command line parsing.
+    """
+    parser = argparse.ArgumentParser(description="""CSPAM stands of CASA: 
+             Source Peeling and Atmospheric Modeling""")
     
-# flag zeros
-flagdata.flagdata(vis=mset.file_path, mode='clip', clipzeros=True,\
-         correlation='ABS_ALL', action='apply', flagbackup=False)
+    parser.add_argument("-c", "--config", help="""Path to the config file""", 
+                        type=str,required=False)
+    parser.add_argument("-v", "--verbose", action="store_true", 
+                        dest="verbosity", help="""Make PNG plot""")
     
-# save flag status
-flagmanager.flagmanager(vis=mset.file_path, mode='save',
-            versionname='AfterStaticFlagging')
+    args = vars(parser.parse_args())
+    return args
 
-# First RFI removal
-flagdata.flagdata(vis=mset.file_path, mode='tfcrop', datacolumn='data',
-         timecutoff = 4., freqcutoff = 3., maxnpieces = 7,\
-         action='apply', flagbackup=False)
 
-# save flag status
-flagmanager.flagmanager(vis=mset.file_path, mode='save',
-            versionname='AfterDynamicFlagging')
+if __name__ == "__main__":
+    args = parseCommandLineArguments()
+    verbose = args['verbosity'] # Don't use it yet
+    config_file = args['config']
+    
+    logging.basicConfig(filename='cspam.log',level=logging.DEBUG)
+    
+    if config_file:
+        conf = get_conf(config_file=config_file)
+    else: # assume default config file (cspam.config)
+        conf = get_conf()
 
-#
-# Just a quick test to create a cal table to test plotcal
-#
-gaincal.gaincal(vis=mset.file_path,
-        caltable=mset.dir_cal+'/'+mset.ms_name+'.initPh',
-        intent='CALIBRATE_PHASE*', solint='int',
-        spw='0:10~13,1;3;5~6:30~33,2:32~35,4:35~38,7:46~49',
-        refant='ea24', minblperant=3,
-        minsnr=3.0, calmode='p',
-        gaintable=mset.dir_cal+'/'+mset.ms_name+'.pos')
+    print "Starting CSPAM version: x.x"
+    print "Parsed configuration file:"
+    utils.print_dict(conf)
 
-# Set models
+    # Creating the list of MSs
+    MSs = []
+    for MSinConf in conf['MSs']:
+        MSs.append(TableObjects.MSObj(conf[MSinConf], MSinConf))
+        # Note that the MSObj class might update field names in the MS
 
-# Bandpass calibration
+    # Carry out the wanted steps per measurement set
+    for mset in MSs:
+        # Set the environment
+        if not os.path.isdir(mset.dir_img):
+            os.makedirs(mset.dir_img)
+        if not os.path.isdir(mset.dir_plot):
+            os.makedirs(mset.dir_plot)
+        if not os.path.isdir(mset.dir_cal):
+            os.makedirs(mset.dir_cal)
 
-# Calibration
+        # Execute the wanted steps
+        if 'plots' in conf['steps']:
+            print 'Step: plots'
+            #steps.plots(mset)
 
-# Self Calibration
+        if 'preflag' in conf['steps']:
+            print 'Step: preflag'
+            #steps.preflag(mset)
+            #print utils.statsFlag(mset.file_path)
 
-# Imaging
-"""
+        if 'setjy' in conf['steps']:
+            print 'Step: setjy'
+            #steps.set_flux_density_scale(mset)
+
+        if 'bandpass' in conf['steps']:
+            print 'Step: bandpass'
+            #steps.bandpass_calibration(mset)
+
+        if 'cal' in conf['steps']:
+            print 'Step: cal'
+            #steps.calib(mset)
+
+        if 'selfcal' in conf['steps']:
+            print 'Step: selfcal'
+            steps.selfcal(mset)
+
+        if 'peeling' in conf['steps']:
+            print 'Step: peeling'
+
+        if 'subtract' in conf['steps']:
+            print 'Step: subtract'
+
+        if 'createimage' in conf['steps']:
+            print 'Step: createimage'
+            steps.createimage(mset)
+
+

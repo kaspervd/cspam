@@ -12,6 +12,8 @@ import logging
 import numpy as np
 import casac
 import os
+import sys
+import utils
 
 ms = casac.casac.ms()
 tb = casac.casac.table()
@@ -22,37 +24,40 @@ class MSObj:
 
     Available instance attributes:
     ------------------------------
-    name                    type   info
+    name                    type    info
 
-    file_path             - str  -
-    ms_name               - str  -
-    summary               - dict -
-    scansummary           - dict - 
-    dir_img               - str  -
-    dir_cal               - str  -
-    dir_plot              - str  -
-    minBL_for_cal         -
-    nchan                 -
-    freq                  -
-    telescope             - str
-    band                  -
-    spw                   -
-    central_chans         -
-    flag                  -
-    cal_scan_ids          -
-    cal_field_ids         -
-    cal_scan_ids_unwanted -
-    tgt_scan_dict         -
-    uvrange               - str
+    file_path             - str   - absolute path to the file
+    ms_name               - str   - name of the measurement set (without .ms)
+    summary               - dict  - summary of the measurement set
+    scansummary           - dict  - summary of the main table
+    dir_img               - str   - absolute path to the img directory
+    dir_cal               - str   - absolute path to the cal directory
+    dir_plot              - str   - absolute path to the plot directory
+    minBL_for_cal         - int   - minimum number of baselines needed
+    nchan                 - int   - number of channels
+    freq                  - float - reference frequency
+    telescope             - str   - name of the telescope
+    band                  - str   - name of the band
+    spw                   - str   - spectral window
+    central_chans         - str   - central channels
+    flag                  - dict  - flag from config in casa style
+    cal_scan_ids          - list  - calibrator scans (check coords if empty)
+    cal_field_ids         - list  - ids of calibrator fields
+    cal_scan_ids_unwanted - list  - not needed/wanted calibrator scans
+    tgt_scan_dict         - dict  - target scans associated with calibrator
+    tgt_field_ids         - list  - ids of target fields
+    tgt_scan_ids          - list  - target scans
+    uvrange               - str   - UV range
 
-    Available public methods:
-    -------------------------
+    Available public instance methods:
+    ----------------------------------
     get_field_name_from_field_id(field):
     
     get_field_name_from_scan_id(scan):
     
     get_field_id_from_scan_id(scan):
-    
+
+    These are pretty much self explanatory. 
     """
 
     def __init__(self, conf, name):
@@ -72,9 +77,12 @@ class MSObj:
         self.dir_img = self.dir_img.replace('.MS','')
         self.dir_img = self.dir_img+'-img'
         
-        # annoying workaround to keep caltables in the same dir of MSs, so plotcal works
-        self.dir_cal = os.path.dirname(self.file_path) 
-        #self.dir_cal = self.file_path.replace('.MS','')+'-cal/'
+        # annoying workaround to keep caltables in the same 
+        # dir of MSs, so plotcal works
+        #self.dir_cal = os.path.dirname(self.file_path) 
+        self.dir_cal = self.file_path.replace('.ms','')
+        self.dir_cal = self.dir_cal.replace('.MS','')
+        self.dir_cal = self.dir_cal+'-cal'
         
         self.dir_plot = self.file_path.replace('.ms','')
         self.dir_plot = self.dir_plot.replace('.MS','')
@@ -83,7 +91,7 @@ class MSObj:
         # Minimum number of baselines
         self.minBL_for_cal = self._get_minBL_for_cal()
         
-        # Number of channles
+        # Number of channels
         self.nchan = self._get_nchan()
         
         # Frequency
@@ -101,19 +109,36 @@ class MSObj:
         
         # Channels
         central_nchan = self.nchan*conf['central_chan_percentage']/100.
-        self.central_chans = str(int(round(self.nchan/2.-central_nchan/2.))) + '~' + str(int(round(self.nchan/2.+central_nchan/2.)))
+        self.central_chans = str(int(round(self.nchan/2.-central_nchan/2.))) \
+                             + '~' + \
+                             str(int(round(self.nchan/2.+central_nchan/2.)))
 
-        # Flags
-        self.flag = self._convert_flag(conf['flag']) # manual flag to be used with flagdata command
+        # Flags (manual flag to be used with flagdata command)
+        self.flag = self._convert_flag(conf['flag']) 
 
-        # Scan and field ids
+        # Scan and field ids for the calibrator
         ids = self._determine_cal_scan_ids(conf['cal_scans'])
         self.cal_scan_ids = ids[0]
         self.cal_field_ids = ids[1]
         self.cal_scan_ids_unwanted = ids[2]
-
-        # Target scans
-        self.tgt_scan_dict = self._determine_tgt_scan_dict(conf['tgt_scans']) # dict of cal scans contining groups of relative cal+tgt scans
+        
+        # Target scans (dict of cal scans contining groups of 
+        # relative cal+tgt scans)
+        self.tgt_scan_dict = self._determine_tgt_scan_dict(conf['tgt_scans'])
+        
+        # Target scan and field ids (note that unwanted scans are already
+        # taken care of in _determine_tgt_scan_dict()
+        target_fids = []
+        target_cids = []
+        for i in self.tgt_scan_dict.values():
+            for ii in i:
+                if ii not in target_cids:
+                    target_cids.append(ii)
+                tgt_field_id = self.get_field_id_from_scan_id(int(ii))
+                if tgt_field_id not in target_fids:
+                    target_fids.append(tgt_field_id)
+        self.tgt_field_ids = target_fids
+        self.tgt_scan_ids = target_cids
         
         # UV range
         if self.telescope == 'GMRT': self.uvrange = '>1000m'
@@ -127,7 +152,6 @@ class MSObj:
         """
         Return: the number of channels
         """
-        #LocTb = casa.table
         tb.open(self.file_path+'/SPECTRAL_WINDOW')
         nchan = tb.getcol('NUM_CHAN')[0]
         tb.close()
@@ -137,7 +161,6 @@ class MSObj:
         """
         Return: the telscope name
         """
-        #LocTb = casa.table
         tb.open(self.file_path+'/OBSERVATION')
         telescope = tb.getcol('TELESCOPE_NAME')[0]
         tb.close()
@@ -161,7 +184,6 @@ class MSObj:
         """
         Return: the reference frequency
         """
-        #LocTb = casa.table
         tb.open(self.file_path+'/SPECTRAL_WINDOW')
         freq = tb.getcol('REF_FREQUENCY')[0]
         tb.close()
@@ -171,7 +193,6 @@ class MSObj:
         """
         Retrun: list of antenna names
         """
-        #LocTb = casa.table
         tb.open( '%s/ANTENNA' % self.file_path)
         antenna_names = tb.getcol( 'NAME' )
         tb.close()
@@ -229,7 +250,7 @@ class MSObj:
                 'refer': 'J2000',
                 'type': 'direction'}
         }
-        
+                
         ms.open(self.file_path)
         cal_scan_ids = []
         cal_field_ids = []
@@ -239,13 +260,17 @@ class MSObj:
             dir = ms.getfielddirmeas(fieldid=int(cal_field_id))
             # if distance with known cal is < than 60" then add it
             for known_cal, known_cal_dir in known_cals.iteritems():
-                if  True: #au.angularSeparationOfDirectionsArcsec(dir, known_cal_dir) <= 60:
-                    if cal_scan_id not in usr_cal_scan_ids and usr_cal_scan_ids != ['']:
-                         # user do not want this scan
-                         logging.info('Found '+known_cal+' in scan: '+cal_scan_id+' *** Ignored')
-                         cal_scan_ids_unwanted.append(cal_scan_id)
+                if utils.angularSeparationOfDirectionsArcsec(
+                         dir, known_cal_dir) <= 60:
+                    if cal_scan_id not in usr_cal_scan_ids \
+                       and usr_cal_scan_ids != ['']:
+                        # user do not want this scan
+                        logging.info('Found '+known_cal+' in scan: '
+                                      +cal_scan_id+' *** Ignored')
+                        cal_scan_ids_unwanted.append(cal_scan_id)
                     else:
-                        logging.info('Found '+known_cal+' in scan: '+cal_scan_id)
+                        logging.info('Found '+known_cal+' in scan: '
+                                     +cal_scan_id)
                         cal_scan_ids.append(cal_scan_id)
                         cal_field_ids.append(str(cal_field_id))
 
@@ -265,14 +290,12 @@ class MSObj:
             logging.critical('No calibrators found')
             sys.exit(1)
 
-        #self.cal_scan_ids = cal_scan_ids
-        #self.cal_field_ids = list(set(cal_field_ids))
-        #self.cal_scan_ids_unwanted = cal_scan_ids_unwanted
         return cal_scan_ids, list(set(cal_field_ids)), cal_scan_ids_unwanted
 
     def _determine_tgt_scan_dict(self, usr_tgt_scan_ids=['']):
         """
-        Set the target scans in a dict associating each calibrator to the closest in time {cal1:[tgt1,tgt2],cal2:[tgt3]}
+        Set the target scans in a dict associating each calibrator 
+        to the closest in time {cal1:[tgt1,tgt2],cal2:[tgt3]}
         if tgt_scans is given, then restrict to those scans
         """
 
@@ -286,12 +309,14 @@ class MSObj:
         # finding the closest cal in time for each target
         tgt_scans_dict = {}
         for tgt_scan_id, tgt_scan_data in self.scansummary.iteritems():
-
-            if tgt_scan_id not in usr_tgt_scan_ids and usr_tgt_scan_ids != ['']: continue # user do not want this scan
-            if tgt_scan_id in self.cal_scan_ids_unwanted: continue # it's a discarded calibrator
-
-            if tgt_scan_id in self.cal_scan_ids: continue # cal scan, not a tgt scan
-                
+            if tgt_scan_id not in usr_tgt_scan_ids \
+                           and usr_tgt_scan_ids != ['']:
+                continue # scan not wanted
+            if tgt_scan_id in self.cal_scan_ids_unwanted:
+                continue # it's a discarded calibrator
+            if tgt_scan_id in self.cal_scan_ids:
+                continue # cal scan, not a tgt scan
+            
             begin = tgt_scan_data['0']['BeginTime']
             end = tgt_scan_data['0']['EndTime']
             tgt_time = begin+(end-begin)/2.
@@ -303,14 +328,19 @@ class MSObj:
                     min_cal = cal_scan_id
 
             # add the calibrator to the dict tgt_scans_dict
-            if not min_cal in tgt_scans_dict: tgt_scans_dict[min_cal] = [min_cal]
+            if not min_cal in tgt_scans_dict:
+                tgt_scans_dict[min_cal] = []
             tgt_scans_dict[min_cal].append(tgt_scan_id)
 
         # printing the results
         for cal_scan_id in tgt_scans_dict:
-            logging.info('Calibrator '+cal_scan_id+' ('+self.get_field_name_from_scan_id(cal_scan_id)+'):')
+            logging.info('Calibrator '+cal_scan_id+
+                         ' ('+self.get_field_name_from_scan_id(cal_scan_id)
+                         +'):')
             for tgt_scan_id in tgt_scans_dict[cal_scan_id]:
-                logging.info('\t * '+tgt_scan_id+' ('+self.get_field_name_from_scan_id(tgt_scan_id)+') ')
+                logging.info('\t * '+tgt_scan_id+
+                             ' ('+self.get_field_name_from_scan_id(
+                             tgt_scan_id)+') ')
 
         return tgt_scans_dict
 

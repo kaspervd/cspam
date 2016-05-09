@@ -1,9 +1,26 @@
 #
-# This file is an exact copy of lines 672-1653 of EVLA_functions.py
+# This file is largely a copy of lines 672-1653 of EVLA_functions.py
 # from the EVLA pipeline version 1.3.4 retrieved from
 # https://science.nrao.edu/facilities/vla/data-processing/pipeline/scripted-pipeline
 # at 16 February 2016 by Kasper van Dam (MSc student Leiden Observatory).
 #
+
+
+#
+# This is needed to run inside casanova
+# Note that also line 240 is changed
+import casac
+casac = casac.casac
+
+from casat import flagdata
+flagdata = flagdata.flagdata
+
+def logprint(text, logfileout=None):
+	print text
+#
+#
+#
+
 
 # Description:
 # ------------
@@ -220,7 +237,7 @@ class RefAntHeuristics:
 		values = numpy.array( score.values() )
 		argSort = numpy.argsort( values )[::-1]
 
-		refAntUpper = keys[argSort]
+		refAntUpper = keys[argSort][0] # This line was changed ([0] added)
 
 		refAnt = list()
 		for r in refAntUpper: refAnt.append( r.lower() )

@@ -1,8 +1,34 @@
+import casac
+import json
+import logging
+import numpy as np
+import math
+import os
+
+af = casac.casac.agentflagger()
+tb = casac.casac.table()
+ms = casac.casac.ms()
+
+from casat import plotcal
+plotcal = plotcal.plotcal
+
+from casat import flagdata
+flagdata = flagdata.flagdata
+
+from casat import uvsub
+uvsub = uvsub.uvsub
+
+from casat import clean
+clean = clean.clean
+
+def print_dict(dictionary):
+    """
+    Print a dictionary in a more readable format
+    """
+    print json.dumps(dictionary, indent=4)
+
+"""
 def stats_flag(ms, spw='', field=''):
-    """
-    Print (and return) the falg statistics
-    """
-    from casa import agentflagger as af
     af.open(ms)
     af.selectdata(field=field, spw=spw)
     agentSummary={'mode':'summary'}
@@ -10,296 +36,377 @@ def stats_flag(ms, spw='', field=''):
     af.init()
     summary = af.run()
     af.done()
-    del af
 
     array_flag = summary['report0']['array']['0']
-    logging.info("Flag percentage: " + str(array_flag['flagged']/array_flag['total']*100.) + "%")
-    return summary
+    info = "Flag percentage: " + str(array_flag['flagged']/array_flag['total']*100.) + "%"
+    logging.info(info)
+    return info
+"""
+
+def angularSeparationOfDirectionsArcsec(dir1,dir2,returnComponents=False):
+    """
+    Accepts two direction dictionaries and returns the separation in arcsec.
+    It computes great circle angle using the Vincenty formula.
+    Todd Hunter
+    """
+    retval = angularSeparationOfDirections(dir1, dir2, returnComponents)
+    if (returnComponents):
+        retval = np.array(retval) * 180*3600 / np.pi
+    else:
+        retval *= 180*3600 / np.pi
+    return(retval)
+
+def angularSeparationOfDirections(dir1,dir2,returnComponents=False):
+    """
+    Accepts two direction dictionaries and returns the separation in radians.
+    It computes great circle angle using the Vincenty formula.
+    --Todd Hunter
+    """
+    rad = angularSeparationRadians(dir1['m0']['value'], dir1['m1']['value'], dir2['m0']['value'], dir2['m1']['value'],returnComponents)
+    return(rad)
+
+def angularSeparationRadians(ra0,dec0,ra1,dec1,returnComponents=False):
+    """
+    Computes the great circle angle between two celestial coordinates.
+    using the Vincenty formula (from wikipedia) which is correct for all
+    angles, as long as you use atan2() to handle a zero denominator.
+    See  http://en.wikipedia.org/wiki/Great_circle_distance
+    Input and output are in radians.  It also works for the az,el coordinate system.
+    returnComponents=True will return: [separation, raSeparation, decSeparation, raSeparationCosDec]
+    See also angularSeparation()
+    -- Todd Hunter
+    """
+    result = angularSeparation(ra0*180/math.pi, dec0*180/math.pi, ra1*180/math.pi, dec1*180/math.pi,returnComponents)
+    if (returnComponents):
+        return(np.array(result)*math.pi/180.)
+    else:
+        return(result*math.pi/180.)
+
+def angularSeparation(ra0,dec0,ra1,dec1, returnComponents=False):
+    """
+    Computes the great circle angle between two celestial coordinates.
+    using the Vincenty formula (from wikipedia) which is correct for all
+    angles, as long as you use atan2() to handle a zero denominator.
+    See  http://en.wikipedia.org/wiki/Great_circle_distance
+    ra,dec must be given in degrees, as is the output.
+    It also works for the az,el coordinate system.
+    Component separations are field_0 minus field_1.
+    See also angularSeparationRadians()
+    returnComponents: if True, then also compute angular separation in both
+         coordinates and the position angle of the separation vector on the sky
+    -- Todd Hunter
+    """
+    ra0 *= math.pi/180.
+    dec0 *= math.pi/180.
+    ra1 *= math.pi/180.
+    dec1 *= math.pi/180.
+    deltaLong = ra0-ra1
+    argument1 = (((math.cos(dec1)*math.sin(deltaLong))**2) +
+                 ((math.cos(dec0)*math.sin(dec1)-math.sin(dec0)*math.cos(dec1)*math.cos(deltaLong))**2))**0.5
+    argument2 = math.sin(dec0)*math.sin(dec1) + math.cos(dec0)*math.cos(dec1)*math.cos(deltaLong)
+    angle = math.atan2(argument1, argument2) / (math.pi/180.)
+    if (angle > 360):
+        angle -= 360
+    if (returnComponents):
+        cosdec = math.cos((dec1+dec0)*0.5)
+        radegreesCosDec = np.degrees(ra0-ra1)*cosdec
+        radegrees = np.degrees(ra0-ra1)
+        decdegrees = np.degrees(dec0-dec1)
+        if (radegrees > 360):
+            radegrees -= 360
+        if (decdegrees > 360):
+            decdegrees -= 360
+#       positionAngle = -math.atan2(decdegrees*math.pi/180., radegreesCosDec*math.pi/180.)*180/math.pi
+        retval = angle,radegrees,decdegrees, radegreesCosDec
+    else:
+        retval = angle
+    return(retval)
+
+def FlagCal(caltable, sigma = 5, cycles = 3):
+    """
+    Flag sol outside n sigmas
+    Better high number of cycles (3) at high sigma (5)
+    """
+    tb.open(caltable, nomodify=False)
+    if 'CPARAM' in tb.colnames():
+        pars=tb.getcol('CPARAM')
+    elif 'FPARAM' in tb.colnames():
+        pars=tb.getcol('FPARAM')
+    else:
+        logging.error("Cannot flag "+caltable+". Unknown type.")
+        return
+    flags=tb.getcol('FLAG')
+    ants=tb.getcol('ANTENNA1')
+    totflag_before = sum(flags.flatten())
+    for c in xrange(cycles):
+        for ant in set(ants):
+            parant = pars[:,:, np.where( ants == ant ) ]
+            flagant = flags[:,:, np.where( ants == ant ) ]
+            good = np.logical_not(flagant)
+            if sum(good.flatten()) == 0: continue # all flagged antenna, continue
+            flagant[ np.abs( parant - np.mean(parant[good]) ) > sigma * np.std( parant[good] ) ] = True
+            flags[:,:, np.where( ants == ant ) ] = flagant
+    tb.putcol('FLAG', flags)
+    totflag_after = sum(flags.flatten())
+    logging.debug(caltable+": Flagged "+str(totflag_after-totflag_before)+" points out of "+str(len(flags.flatten()))+".")
+    tb.close()
+
+def getMaxAmp(caltable):
+    """Return maximum unflagged amp for plotting purposes
+    """
+    tb.open(caltable)
+    cpar=tb.getcol('CPARAM')
+    flgs=tb.getcol('FLAG')
+    tb.close()
+    amps=np.abs(cpar)
+    good=np.logical_not(flgs)
+    maxamp=np.max(amps[good])
+    return maxamp
+
+def plotGainCal(calt, plotdirectory, amp=False, phase=False, BL=False, delay=False):
+    """Do the standard plot of gain solutions
+    """
+    if not os.path.isdir(plotdirectory):
+        os.makedirs(plotdirectory)
     
-def unwrap_phase( x, window = 10, alpha = 0.01, iterations = 3,
-    clip_range = [ 170., 180. ] ): 
-    """
-    Unwrap the x array, if it is shorter than 2*window, use np.unwrap()
-    """
-
-    if len(x) < 2*window: return np.unwrap(x)
-
-    xx = np.array( x, dtype = np.float64 )
-#   a = zeros( ( window ), dtype = np.float64 )
-#   a[ -1 ] = 1.
-    if ( len( clip_range ) == 2 ):
-        o = clip_range[ 0 ]
-        s = ( clip_range[ 1 ] - clip_range[ 0 ] ) / 90.
-    a = np.ones( ( window ), dtype = np.float64 ) / float( window )
-    xs = xx[ 0 ]
-    for j in range( 2 * iterations ):
-        for k in range( window, len( x ) ): 
-            xi = xx[ k - window : k ]
-            xp = np.dot( xi, a )
-            e = xx[ k ] - xp
-            e = np.mod( e + 180., 360. ) - 180.
-            if ( len( clip_range ) == 2 ):
-                if ( abs( e ) > o ):
-                    e = sign( e ) * ( s * degrees( atan( radians( ( abs( e ) - o ) / s ) ) ) + o )  
-            xx[ k ] = xp + e
-#           a = a + xx[ k - window : k ] * alpha * e / 360.
-            a = a + xi * alpha * e / ( np.dot( xi, xi ) + 1.e-6 )
-        xx = xx[ : : -1 ].copy()
-    xx = xx - xx[ 0 ] + xs 
-    return xx
-
-
-# TODO: what if reference antenna changes?
-def sol_filter_G(calt, window_ph = 60., window_amp = 60., order = 1, max_gap = 5.,
-    max_ncycles = 10, max_rms_amp = 3., max_rms_ph=3.):
-    """
-    Do complex filtering on G Jones solution tables
-    return:
-    dict with rms values. Dict is inexed by a tuple of (scan, ant, spw, pol, chan)
-    """
-    ST = STobj(calt) 
-    rms_dict = {}
-
-    for coord, val in ST.get_val_iter(return_axes=['TIME','VAL','FLAG','ANTENNA2'],
-        iter_axes=['SCAN_NUMBER', 'SPECTRAL_WINDOW_ID', 'ANTENNA1']):
-
-        npol, nchan, __null = val['VAL'].shape
-        # check if the reference antenna is always the same
-        if not ( val['ANTENNA2'][0] == val['ANTENNA2'] ).all():
-            raise "Reference antenna changing!"
-
-        allamp = np.log10(abs(val['VAL'])) # amp in log so to have gaussian noise
-        allph = np.arctan2(np.imag( val['VAL'] ),np.real( val['VAL'] ))
-        new_flag = np.copy(val['FLAG'])
-
-        # cycle across chan and polarizations
-        for pol in xrange(npol):
-            for chan in xrange(nchan):
-
-                print "working on pol "+str(pol)+" - chan "+str(chan)
-                print coord
-
-                # restrict to a pol/chan and remove flagged data
-                flag = val['FLAG'][pol][chan]
-                amp = allamp[pol][chan][~flag]
-                ph = allph[pol][chan][~flag]
-                time = val['TIME'][~flag]
-
-                # unwrap phases
-                ph = unwrap_phase( ph, alpha = 0.01 )
-                if ( np.nan == ph ).any:
-                    ph = unwrap_phase( ph, alpha = 0.001 )
-                if ( np.nan == ph ).any or max( np.fabs( ph ) ) > 1.e4:
-                    ph = np.unwrap( ph )
-        
-                # filtering
-                new_flag[pol][chan][~flag], rms_amp = outlier_rej(amp, time, max_ncycles, max_rms_amp, window_amp, order, max_gap)
-                new_flag[pol][chan][~flag], rms_ph  = outlier_rej(ph, time, max_ncycles, max_rms_ph, window_ph, order, max_gap)
-
-                # creating return dict (scan, ant, spw, pol, chan)
-                rms_dict[tuple(['amp'] + [c for col, c in coord.iteritems()] + [pol] + [chan])] = np.sum(rms_amp)
-                rms_dict[tuple(['ph'] + [c for col, c in coord.iteritems()] + [pol] + [chan])] = np.sum(rms_ph)
-
-        # writing back
-        ST.put_val(coord, new_flag, axis='FLAG')
-
-    return rms_dict
-
-
-def smooth(data, times, window = 60., order = 1, max_gap = 5. ):
-    """
-    Remove a trend from the data
-    window: in sec, sliding phase window dimension
-    order: 0: remove avg, 1: remove linear, 2: remove cubic
-    max_gap: maximum allawed gap in minutes
-
-    return: detrendized data array
-    """
-    
-    final_data = np.copy(data)
-
-    # loop over solution times
-    for time in times:
-
-        # get data to smooth (values inside the time window)
-
-        data_array = data[ np.where( abs(times - time) <= window / 2. ) ]
-        data_offsets = times[ np.where( abs(times - time) <= window / 2. ) ] - time
-
-        # check and remove big gaps in data
-        if ( len( data_offsets ) > 1 ):
-          ddata_offsets = data_offsets[ 1 : ] - data_offsets[ : -1 ]
-          sel = np.where( ddata_offsets > max_gap * 60. )[0]
-          if ( len( sel ) > 0 ):
-            min_data_index = 0
-            max_data_index = len( data_offsets )
-            this_time_index = np.where( abs( data_offsets ) == abs( data_offsets ).min() )[0]
-            # find min and max good indexes for this window
-            for s in sel:
-              if ( s < this_time_index ):
-                min_data_index = s + 1
-              if ( s >= this_time_index ):
-                max_data_index = s + 1
-                break
-            # redefine data arrays
-            data_array = data_array[ min_data_index : max_data_index ]
-            data_offsets = data_offsets[ min_data_index : max_data_index ]
-
-        # smooth
-        if len( data_array ) > 1:
-          dim = min( len( data_array ) - 2, order )
-          if ( dim == 0 ):
-            smooth_data = np.median( data_array )
-          else:
-            P = np.zeros( ( len( data_offsets ), dim + 1 ), dtype = data_offsets.dtype )
-            P[ : , 0 ] = 1.
-            if ( dim >= 1 ):
-                P[ : , 1 ] = data_offsets
-            if ( dim >= 2 ):
-                P[ : , 2 ] = data_offsets**2
-            Pt = np.transpose( P )
-            smooth_data = np.dot( np.linalg.inv( np.dot( Pt, P ) ), np.dot( Pt, data_array ) )[ 0 ]
-          n = np.where( times == time )[0]
-          final_data[n] = smooth_data
-        
-    return final_data
-
-
-def outlier_rej(val, time, max_ncycles = 10, max_rms = 3., window = 60., order = 1, max_gap = 5.):
-    """
-    Reject outliers using a running median
-    val = the array (avg must be 0)
-    max_ncycles = maximum number of cycles
-    max_rms = number of rms times for outlier flagging
-    return: flags array and final rms
-    """
-    flags = np.zeros(shape=val.shape, dtype=np.bool)
-    val_detrend = np.zeros(shape=val.shape)
-
-    # DEBUG plotting
-    #import matplotlib.pyplot as plt
-    #import matplotlib.cm as cm
-    #colors = iter(cm.rainbow(np.linspace(0, 1, max_ncycles)))
-    #plt.plot( time[~flags], val[~flags], 'o-', color='k' )
-
-    for i in xrange(max_ncycles):
-        
-        # smoothing (input with no flags!)
-        val_smoothed = smooth(val[~flags], time[~flags], window, order, max_gap)
-        val_detrend[~flags] = val[~flags] - val_smoothed
-
-        # DEBUG plotting
-        #color = next(colors)
-        #plt.plot( time[~flags], val_smoothed, 'x:', label=str(i), color=color )
-
-        # median calc
-        rms =  1.4826 * np.median(abs(val_detrend[~flags]))
-
-        # rejection  
-        flags[ ~flags ] = np.logical_or(flags[~flags], abs(val_detrend[~flags]) > max_rms * rms )
-
-        # DEBUG plotting
-        #plt.plot( time[ flags ], val[ flags ], '*', markersize=20, color=color )
-
-        if (flags == True).all():
-            rms == 0.
-            break
-            
-        # median calc
-        this_rms =  1.4826 * np.median(abs(val_detrend[~flags]))
-        if rms - this_rms == 0.:
-            break
-
-    # DEBUG plotting
-    #plt.legend()
-    #plt.show()
-    return flags, rms
-
-def plot_cal_table(calt, MS):
-    """
-    Do the standard plot of gain solutions
-    """
-    ST = STobj(calt) 
-    nplots = len(ST.get_antenna_names())/3
-
-    if 'G' == ST.st_type()[0]:
-        if 'a' in calt[-3,-1]:
-            plotmin, plotmax = ST.get_min_max('a')
-            for ii in range(nplots):
-                filename=MS.dir_plot+calt.split('/')[-1]+'_a'+str(ii)+'.png'
-                syscommand='rm -rf '+filename
-                os.system(syscommand)
-                antPlot=str(ii*3)+'~'+str(ii*3+2)
-                default('plotcal')
-                plotcal(caltable=calt,xaxis='time',yaxis='amp',antenna=antPlot,subplot=311,\
-                    iteration='antenna',plotrange=[0,0,plotmin,plotmax],plotsymbol='o-',plotcolor='red',\
-                    markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
-
-        if 'p' in calt[-3,-1]:
-            for ii in range(nplots):
-                plotmin, plotmax = ST.get_min_max('p')*180/np.pi
-                filename=MS.dir_plot+calt.split('/')[-1]+'_p'+str(ii)+'.png'
-                syscommand='rm -rf '+filename
-                os.system(syscommand)
-                antPlot=str(ii*3)+'~'+str(ii*3+2)
-                default('plotcal')
-                plotcal(caltable=calt,xaxis='time',yaxis='phase',antenna=antPlot,subplot=311,\
-                    overplot=False,clearpanel='Auto',iteration='antenna',plotrange=[0,0,plotmin,plotmax],\
-                    plotsymbol='o-',plotcolor='blue',markersize=5.0,fontsize=10.0,showgui=False,\
-                    figfile=filename)
-
-    if 'K' == ST.st_type()[0]:
+    tb.open( '%s/ANTENNA' % calt)
+    nameAntenna = tb.getcol( 'NAME' )
+    numAntenna = len(nameAntenna)
+    tb.close()
+    nplots=int(numAntenna/3)
+    if amp == True:
+        plotmax = getMaxAmp(calt)
         for ii in range(nplots):
-            filename=MS.dir_plot+calt.split('/')[-1]+'_'+str(ii)+'.png'
+            filename=plotdirectory+'/'+'a_'+str(ii)+'.png'
             syscommand='rm -rf '+filename
             os.system(syscommand)
             antPlot=str(ii*3)+'~'+str(ii*3+2)
-            default('plotcal')
+            if BL: xaxis = 'antenna2'
+            else: xaxis = 'time'
+            if BL: plotsymbol = 'o'
+            else: plotsymbol = 'o-'
+            plotcal(caltable=calt,xaxis=xaxis,yaxis='amp',antenna=antPlot,subplot=311,\
+                iteration='antenna',plotrange=[0,0,0,plotmax],plotsymbol=plotsymbol,plotcolor='red',\
+                markersize=5.0,fontsize=8.0,showgui=False,figfile=filename)
+    if phase == True:
+        for ii in range(nplots):
+            filename=plotdirectory+'/'+'p_'+str(ii)+'.png'
+            syscommand='rm -rf '+filename
+            os.system(syscommand)
+            antPlot=str(ii*3)+'~'+str(ii*3+2)
+            if BL: xaxis = 'antenna2'
+            else: xaxis = 'time'
+            plotcal(caltable=calt,xaxis=xaxis,yaxis='phase',antenna=antPlot,subplot=311,\
+                overplot=False,clearpanel='Auto',iteration='antenna',plotrange=[0,0,-180,180],\
+                plotsymbol='o-',plotcolor='blue',markersize=5.0,fontsize=8.0,showgui=False,\
+                figfile=filename)
+    if delay == True:
+        for ii in range(nplots):
+            filename=plotdirectory+'/'+'_'+str(ii)+'.png'
+            syscommand='rm -rf '+filename
+            os.system(syscommand)
+            antPlot=str(ii*3)+'~'+str(ii*3+2)
             plotcal(caltable=calt,xaxis='time',yaxis='delay',antenna=antPlot,subplot=311,\
-                iteration='antenna',plotsymbol='o-',plotcolor='green',\
-                markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
+                overplot=False,clearpanel='Auto',iteration='antenna',plotrange=[],\
+                plotsymbol='o-',markersize=5.0,fontsize=8.0,showgui=False,\
+                figfile=filename)
 
-    if 'B' == ST.st_type()[0]:
-        if 'a' in calt[-3,-1]:
-            plotmin, plotmax = ST.get_min_max('a')
-            for ii in range(nplots):
-                filename=MS.dir_plot+calt.split('/')[-1]+'_a'+str(ii)+'.png'
-                syscommand='rm -rf '+filename
-                os.system(syscommand)
-                antPlot=str(ii*3)+'~'+str(ii*3+2)
-                default('plotcal')
-                plotcal(caltable=calt,xaxis='freq',yaxis='amp',antenna=antPlot,subplot=311,\
-                    iteration='antenna',plotrange=[0,0,plotmin,plotmax],showflags=False,plotsymbol='o',\
-                    plotcolor='blue',markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
-
-        if 'p' in calt[-3,-1]:
-            plotmin, plotmax = ST.get_min_max('p')*180/np.pi
-            for ii in range(nplots):
-                filename=MS.dir_plot+calt.split('/')[-1]+'_p'+str(ii)+'.png'
-                syscommand='rm -rf '+filename
-                os.system(syscommand)
-                antPlot=str(ii*3)+'~'+str(ii*3+2)
-                default('plotcal')
-                plotcal(caltable=calt,xaxis='freq',yaxis='phase',antenna=antPlot,subplot=311,\
-                    iteration='antenna',plotrange=[0,0,plotmin,plotmax],showflags=False,\
-                    plotsymbol='o',plotcolor='blue',markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
- 
-
-def flag_low_Ba(calt, p = 5):
+def plotBPCal(calt, plotdirectory, amp=False, phase=False):
+    """Do the standard plot of bandpass solutions
     """
-    Flag from the given Ba table the channels below "p" percentage from the mean
-    """
-    tb.open(calt, nomodify=False)
-    cpar = np.abs(tb.getcol('CPARAM'))
-    flags = tb.getcol('FLAG')
-    flags_sum = np.sum(flags)
-    antennas = tb.getcol('ANTENNA1')
-    # cpar has shape pol:chan:ant
-    npol, nchan, nant = cpar.shape
-    for pol in xrange(npol):
-        for ant in xrange(nant):
-            bad_chans = np.where(cpar[pol,:,ant] < p/100.*max(cpar[pol,:,ant]))
-            flags[pol,bad_chans,ant] = 1
-    tb.putcol('FLAG', flags)
+    tb.open(calt)
+    dataVarCol = tb.getvarcol('CPARAM')
+    flagVarCol = tb.getvarcol('FLAG')
     tb.close()
-    logging.info("Flagged channel below "+str(p)+"%: "+str((np.sum(flags)-flags_sum)/float(flags_sum)*100)+"%")
+    rowlist = dataVarCol.keys()
+    nrows = len(rowlist)
+    maxmaxamp = 0.0
+    maxmaxphase = 0.0
+    for rrow in rowlist:
+        dataArr = dataVarCol[rrow]
+        flagArr = flagVarCol[rrow]
+        amps=np.abs(dataArr)
+        phases=np.arctan2(np.imag(dataArr),np.real(dataArr))
+        good=np.logical_not(flagArr)
+        tmparr=amps[good]
+        if (len(tmparr)>0):
+            maxamp=np.max(amps[good])
+            if (maxamp>maxmaxamp):
+                maxmaxamp=maxamp
+        tmparr=np.abs(phases[good])
+        if (len(tmparr)>0):
+            maxphase=np.max(np.abs(phases[good]))*180./np.pi
+            if (maxphase>maxmaxphase):
+                maxmaxphase=maxphase
+    ampplotmax=maxmaxamp
+    phaseplotmax=maxmaxphase
+
+    tb.open( '%s/ANTENNA' % calt)
+    nameAntenna = tb.getcol( 'NAME' )
+    numAntenna = len(nameAntenna)
+    tb.close()
+    nplots=int(numAntenna/3)
+
+    if amp == True:
+        for ii in range(nplots):
+            filename=plotdirectory+'/'+'BP_a_'+str(ii)+'.png'
+            syscommand='rm -rf '+filename
+            os.system(syscommand)
+            antPlot=str(ii*3)+'~'+str(ii*3+2)
+            #default('plotcal')
+            plotcal(caltable=calt,xaxis='freq',yaxis='amp',antenna=antPlot,subplot=311,\
+                iteration='antenna',plotrange=[0,0,0,ampplotmax],showflags=False,plotsymbol='o',\
+                plotcolor='blue',markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
+
+    if phase == True:
+        for ii in range(nplots):
+            filename=plotdirectory+'/'+'BP_p_'+str(ii)+'.png'
+            syscommand='rm -rf '+filename
+            os.system(syscommand)
+            antPlot=str(ii*3)+'~'+str(ii*3+2)
+            #default('plotcal')
+            plotcal(caltable=calt,xaxis='freq',yaxis='phase',antenna=antPlot,subplot=311,\
+                iteration='antenna',plotrange=[0,0,-phaseplotmax,phaseplotmax],showflags=False,\
+                plotsymbol='o',plotcolor='blue',markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
+
+
+def clipresidual(active_ms, f='', s=''):
+    """Create residuals in the CORRECTED_DATA (then unusable!)
+    and clip at 5 times the total flux of the model
+    NOTE: the ms CORRECTED_DATA will be corrupted!
+    """
+
+    #default('uvsub')
+    uvsub(vis=active_ms)
+
+    # flag statistics before flagging
+    statsFlag(active_ms, note='Before BL flag')
+
+    logging.debug("Removing baselines with high residuals:")
+    import itertools
+    ms.open(active_ms, nomodify=False)
+    metadata = ms.metadata()
+    flag = {}
+    # datadesc ids are usually one per spw, but ms can also be splitted in corr
+    for datadescid in metadata.datadescids():
+        flag[datadescid] = {}
+        logging.debug("Working on datadesc: "+str(datadescid))
+        ms.msselect({'field':f, 'scan':s})
+        d = ms.getdata(['corrected_amplitude','flag','antenna1','antenna2','axis_info'], ifraxis=True)
+        # cycle on corr
+        for corr in xrange(len(d['corrected_amplitude'])):
+            flag[datadescid][corr] = {}
+            logging.debug("Working on corr: "+d['axis_info']['corr_axis'][corr])
+            # cycle on channels
+            for chan in xrange(len(d['corrected_amplitude'][corr])):
+                flag[datadescid][corr][chan] = {}
+                meds = []
+                # cycle on bl
+                for bl in xrange(len(d['corrected_amplitude'][corr][chan])):
+                    amp = d['corrected_amplitude'][corr][chan][bl][~d['flag'][corr][chan][bl]] # get unflagged data
+                    if amp != []: meds.append(np.median( amp[(amp == amp)] ))
+                if meds != []:
+                    med = np.mean(meds)
+                    rms = np.std(meds)
+                for bl in xrange(len(d['corrected_amplitude'][corr][chan])):
+                    flag[datadescid][corr][chan][bl] = False
+                    amp = d['corrected_amplitude'][corr][chan][bl][~d['flag'][corr][chan][bl]] # get unflagged data
+                    if amp != []: 
+                        bl_med = np.median( amp[(amp == amp)] )
+                        # if BL residuals are 3 times out of med rms, flag
+                        if abs(bl_med - med) > 3*rms:
+                            logging.debug("Flagging corr: "+d['axis_info']['corr_axis'][corr]+" - chan:"+str(chan)+" - BL: "+d['axis_info']['ifr_axis']['ifr_name'][bl])
+                            flag[datadescid][corr][chan][bl] = True
+    ms.close()
+
+    # extend flags to all scans
+    ms.open(active_ms, nomodify=False)
+    metadata = ms.metadata()
+    # datadesc ids are usually one per spw, but ms can also be splitted in corr
+    for datadescid in metadata.datadescids():
+        ms.msselect()
+        w = ms.getdata(['flag'], ifraxis=True)
+        for corr in xrange(len(w['flag'])):
+            # TODO: extend flags on all chan for BLs which appear often
+            for chan in xrange(len(w['flag'][corr])):
+                for bl in xrange(len(w['flag'][corr][chan])):
+					
+                    #print '--'
+                    #print len(d['corrected_amplitude'][corr][chan])
+                    #print len(w['flag'][corr][chan])
+                    #print len(flag[datadescid][corr][chan])
+                    #print '--'
+                    
+                    # So, sometimes len(w['flag'][corr][chan]) > len(flag[datadescid][corr][chan])
+                    # CHECK IF THIS IS A GOOD SOLUTION
+                    bl = min(bl, len(flag[datadescid][corr][chan])-1)
+					
+                    if flag[datadescid][corr][chan][bl] == True:
+                        w['flag'][corr][chan][bl] = True
+                        
+        ms.putdata({'flag':w['flag']})
+    ms.close()
+
+    statsFlag(active_ms, note='After clipping')
+
+def statsFlag(active_ms, field='', scan='', note=''):
+    t = flagdata(vis=active_ms, mode='summary', field=field, scan=scan, action='calculate')
+    log = 'Flag statistics ('+note+'):'
+    log += '\nAntenna, '
+    for k in sorted(t['antenna']):
+        log += k +': %.2f%% - ' % (100.*t['antenna'][k]['flagged']/t['antenna'][k]['total'])
+    log += '\nCorrelation, '
+    for k, v in t['correlation'].items():
+        log += k +': %.2f%% - ' % (100.*v['flagged']/v['total'])
+    log += '\nSpw, '
+    for k, v in t['spw'].items():
+        log += k +': %.2f%% - ' % (100.*v['flagged']/v['total'])
+    log += '\nTotal: %.2f%%' % (100.*t['flagged']/t['total'])
+    correctedlog = log.replace(' - \n','\n')
+    logging.debug(correctedlog)
+    return correctedlog
+
+def cleanmaskclean(parms, makemask=True):
+    """
+    Clean then make a mask and clean again
+    parms: dict of parameters for the clean task
+    makemask: if false quit after first clean
+    """
+    clean(**parms)
+    if not makemask: return
+
+    # make mask and re-do image
+    if parms['nterms'] > 1:
+        img = parms['imagename']+'.image.tt0' # tt = Taylor terms
+    else: img = parms['imagename']+'.image'
+
+    """
+    if s.extended:
+        os.system(pipdir+'/setpp.sh make_mask.py '+img+' -m'+parms['imagename']+\
+                  '.newmask --threshpix=6 --threshisl=3 --atrous_do')
+    else:
+        os.system(pipdir+'/setpp.sh make_mask.py '+img+' -m'+parms['imagename']+\
+                  '.newmask --threshpix=6 --threshisl=3')
+    """
+    # Let's make the mask with a trous wavelet decomposition in any case
+    # see: ftp://ftp.hs.uni-hamburg.de/pub/outgoing/rafferty/PyBDSM/PyBDSM_1.8.pdf
+    # section 3.2.2
+    
+    # fetch to directory, make_mask.py is in the same directory as utils.py
+    libdirectory = os.path.dirname(os.path.realpath(__file__))
+    # execute this in another python session since importing casac in casanova
+    # messes up pybdsm
+    os.system(libdirectory+'/make_mask.py '+img+' -m'+parms['imagename']+'.newmask --threshpix=6 --threshisl=3 --atrous_do')
+    
+    """
+    if s.mask_faint != '':
+        parms['mask']=[parms['imagename']+'.newmask',s.mask_faint]
+    else:
+        parms['mask']=parms['imagename']+'.newmask'
+    """
+    # Let's assume no faint mask
+    parms['mask']=parms['imagename']+'.newmask'
+    parms['imagename']=parms['imagename']+'-masked'
+    parms['niter']=parms['niter']/3 # reduce number if clean iterations in masked mode
+    
+    clean(**parms)
