@@ -27,22 +27,6 @@ def print_dict(dictionary):
     """
     print json.dumps(dictionary, indent=4)
 
-"""
-def stats_flag(ms, spw='', field=''):
-    af.open(ms)
-    af.selectdata(field=field, spw=spw)
-    agentSummary={'mode':'summary'}
-    af.parseagentparameters(agentSummary)
-    af.init()
-    summary = af.run()
-    af.done()
-
-    array_flag = summary['report0']['array']['0']
-    info = "Flag percentage: " + str(array_flag['flagged']/array_flag['total']*100.) + "%"
-    logging.info(info)
-    return info
-"""
-
 def angularSeparationOfDirectionsArcsec(dir1,dir2,returnComponents=False):
     """
     Accepts two direction dictionaries and returns the separation in arcsec.
@@ -152,7 +136,8 @@ def FlagCal(caltable, sigma = 5, cycles = 3):
     tb.close()
 
 def getMaxAmp(caltable):
-    """Return maximum unflagged amp for plotting purposes
+    """
+    Return maximum unflagged amp for plotting purposes
     """
     tb.open(caltable)
     cpar=tb.getcol('CPARAM')
@@ -164,7 +149,8 @@ def getMaxAmp(caltable):
     return maxamp
 
 def plotGainCal(calt, plotdirectory, amp=False, phase=False, BL=False, delay=False):
-    """Do the standard plot of gain solutions
+    """
+    Do the standard plot of gain solutions
     """
     if not os.path.isdir(plotdirectory):
         os.makedirs(plotdirectory)
@@ -202,7 +188,7 @@ def plotGainCal(calt, plotdirectory, amp=False, phase=False, BL=False, delay=Fal
                 figfile=filename)
     if delay == True:
         for ii in range(nplots):
-            filename=plotdirectory+'/'+'_'+str(ii)+'.png'
+            filename=plotdirectory+'/'+'d_'+str(ii)+'.png'
             syscommand='rm -rf '+filename
             os.system(syscommand)
             antPlot=str(ii*3)+'~'+str(ii*3+2)
@@ -212,7 +198,8 @@ def plotGainCal(calt, plotdirectory, amp=False, phase=False, BL=False, delay=Fal
                 figfile=filename)
 
 def plotBPCal(calt, plotdirectory, amp=False, phase=False):
-    """Do the standard plot of bandpass solutions
+    """
+    Do the standard plot of bandpass solutions
     """
     tb.open(calt)
     dataVarCol = tb.getvarcol('CPARAM')
@@ -271,7 +258,8 @@ def plotBPCal(calt, plotdirectory, amp=False, phase=False):
 
 
 def clipresidual(active_ms, f='', s=''):
-    """Create residuals in the CORRECTED_DATA (then unusable!)
+    """
+    Create residuals in the CORRECTED_DATA (then unusable!)
     and clip at 5 times the total flux of the model
     NOTE: the ms CORRECTED_DATA will be corrupted!
     """

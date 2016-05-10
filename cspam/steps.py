@@ -345,7 +345,8 @@ def bandpass_calibration(mset):
 
 def calib(mset):
     """
-    This method ...
+    This method compensates for the change of gain with time using a
+    calibrator source.
     """
     
     logging.info("### CALIB")
@@ -357,7 +358,6 @@ def calib(mset):
     for cal_field_id in mset.cal_field_ids:
         cal_fieldname = mset.get_field_name_from_field_id(cal_field_id)
         caltablepathg = mset.dir_cal+'/gain_cal_'+cal_fieldname+'/'
-        caltablepathf = mset.dir_cal+'/flux_cal_'+cal_fieldname+'/'
 
         if not os.path.isdir(mset.dir_cal+'/gain_cal_'+cal_fieldname):
             os.makedirs(mset.dir_cal+'/gain_cal_'+cal_fieldname)
@@ -375,7 +375,8 @@ def calib(mset):
 
         n_cycles = 3
         for cycle in xrange(n_cycles):
-    
+            # Three cycles of phase calibration, time delay calibration,
+            # (another) phase calibration and amplitude calibration.
             logging.info("Start CALIB cycle: "+str(cycle))
     
             refAntObj = AntennaObjects.RefAntHeuristics(vis=mset.file_path, 
@@ -384,6 +385,7 @@ def calib(mset):
             refAnt = refAntObj.calculate()[0]
             
             # Reset these for this cycle
+            caltablepathf = mset.dir_cal+'/flux_cal_'+cal_fieldname+'/'
             gaintables=[caltablepathf+'final.B', caltablepathf+'final.Kcross']
             interp=['nearest,nearestflag','nearest,nearestflag']
             
@@ -444,49 +446,21 @@ def calib(mset):
                     gaintable=gaintables)
             utils.FlagCal(caltablepathg+'gain'+str(cycle)+'.Ga', sigma = 3, 
                           cycles = 3)
-    
-            """
-            # if gain and flux cal are the same the fluxscale cannot work
-            # do it only in the last cycle, so the next clip can work, otherwise the uvsub subtract
-            # a wrong model for (amp==1) for the gain_cal if it had been rescaled
-            if s.g != s.f and cycle == n_cycles-1:
-                # fluxscale
-                logging.debug("Rescale gaincal sol with fluxcal sol.")
-                #default('fluxscale')
-                fluxscale(vis=active_ms, caltable=caltablepath+'gain'+str(cycle)+'.Ga',\
-                	fluxtable=caltablepath+'gain'+str(cycle)+'.Ga_fluxscale', reference=s.f, transfer=s.g)
-
-                plotGainCal(caltablepath+'gain'+str(cycle)+'.Ga_fluxscale', amp=True)
-                gaintables.append(caltablepath+'gain'+str(cycle)+'.Ga_fluxscale')
-                interp.append('linear')
-            else:
-                plotGainCal(caltablepath+'gain'+str(cycle)+'.Ga', amp=True)
-                gaintables.append(caltablepath+'gain'+str(cycle)+'.Ga')
-                interp.append('linear')
-            """
             
-            # In this case gain and flux calibrators are one and the same
+            # Note that the gain and flux calibrators are one and the same
+            # so there is no need to call fluxscale()
             utils.plotGainCal(caltablepathg+'gain'+str(cycle)+'.Ga',
                               mset.dir_plot+'/gain_cal_'+cal_fieldname,
                               amp=True)
             gaintables.append(caltablepathg+'gain'+str(cycle)+'.Ga')
             interp.append('linear')
-            
-            # BLcal TODO: do BLcal on the fluxcal?
-            #if s.f in s.fmodel:
-            #    print "WARNING: flux_cal has a model and its being used for BLCAL, model must be superprecise!" 
-            #blcal(vis=active_ms, caltable='cal/'+s.name+'/gain'+str(cycle)+'.BLap',  field=s.f,\
-            #    scan=s.fscan, combine='', solint='inf', calmode='ap', gaintable=gaintables, solnorm=True)
-            #FlagBLcal('cal/'+s.name+'/gain'+str(cycle)+'.BLap', sigma = 3)
-            #plotGainCal('cal/'+s.name+'/gain'+str(cycle)+'.BLap', amp=True, phase=True, BL=True)
-            #gaintables.append('cal/'+s.name+'/gain'+str(cycle)+'.BLap')
-            #interp.append('nearest')
 
             applycal(vis=mset.file_path, field=cal_fieldname, scan=scans,
                      gaintable=gaintables, interp=interp, calwt=False, 
                      flagbackup=False)
             
-            # clip of residuals not on the last cycle (useless and prevent imaging of calibrator)
+            # clip of residuals not on the last cycle (useless and prevent
+            # imaging of calibrator)
             if cycle != n_cycles-1:
                 utils.clipresidual(mset.file_path, f=cal_fieldname, s=scans)
 
@@ -501,8 +475,9 @@ def calib(mset):
               	 'usescratch':False}
         utils.cleanmaskclean(parms, makemask=False)
 
-    # use a different cycle to compensate for messing up with uvsub during the calibration of other sources
-    # in this way the CRRECTED_DATA are OK for all fields
+    # use a different cycle to compensate for messing up with uvsub during the 
+    # calibration of other sources in this way the CRRECTED_DATA are OK for 
+    # all fields
     for field_id in mset.cal_field_ids+mset.tgt_field_ids:
         fieldname = mset.get_field_name_from_field_id(field_id)
         # apply B, Gp, Ga
@@ -518,6 +493,10 @@ def calib(mset):
                  flagbackup=False)
 
 def selfcal(mset):
+    """
+    This method compensates for the change of gain with time using the data
+    itself (and possibly a skymodel).
+    """
     logging.info("### SELFCAL")
 
     if mset.freq > 1000e6: width = 16
@@ -614,16 +593,16 @@ def selfcal(mset):
                              flagbackup=False)           
                 elif cycle >= 4: 
                     utils.plotGainCal(mset.dir_cal+'/self_cal_'+tgt_fieldname+\
-                                      '/'+tgt_fieldname+str(cycle-2)+'.Gp', 
+                                      '/'+tgt_fieldname+str(cycle-1)+'.Gp', 
                                       mset.dir_plot+'/self_cal_'+tgt_fieldname+\
-                                      '/Gp_cycle'+str(cycle-2), phase=True)
+                                      '/Gp_cycle'+str(cycle-1), phase=True)
                     utils.plotGainCal(mset.dir_cal+'/self_cal_'+tgt_fieldname+\
-                                      '/'+tgt_fieldname+str(cycle-2)+'.Ga', 
+                                      '/'+tgt_fieldname+str(cycle-1)+'.Ga', 
                                       mset.dir_plot+'/self_cal_'+tgt_fieldname+\
-                                      '/Ga_cycle'+str(cycle-2), amp=True)
+                                      '/Ga_cycle'+str(cycle-1), amp=True)
                     applycal(vis=target_file_path, gaintable=gaintable, 
                              interp=['linear','linear'], calwt=False, 
-                             flagbackup=False)           
+                             flagbackup=False)
 
                 break
 
@@ -748,15 +727,3 @@ def createimage(mset):
     utils.cleanmaskclean(parms, makemask=False)
     
     exportfits(imagename=target_file_path[:-3]+'_final.image.tt0',fitsimage=target_file_path[:-3]+'_final.fits',history=False)
-
-    #for s in sources:
-        #check_rm('img/'+s.name+'/lowres*')
-
-        #parms = {'vis':s.ms, 'imagename':'img/'+s.name+'/lowres', 'gridmode':'widefield', 'wprojplanes':512,\
-           	#'mode':'mfs', 'nterms':2, 'niter':10000, 'gain':0.1, 'psfmode':'clark', 'imagermode':'csclean',\
-            #'imsize':sou_size, 'cell':sou_res, 'weighting':'briggs', 'robust':rob, 'usescratch':True, 'mask':s.mask, \
-            #'uvtaper':True, 'outertaper':[taper], 'threshold':str(s.expnoise)+' Jy', 'multiscale':s.multiscale}
-        #cleanmaskclean(parms, s)
-        
-        ## pbcorr
-        #correctPB('img/'+s.name+'/lowres-masked.image.tt0', freq, phaseCentre=None)
