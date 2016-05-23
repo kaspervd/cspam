@@ -5,11 +5,11 @@ import logging
 import ConfigParser
 import argparse
 
+# CSPAM Modules
 from lib import AntennaObjects
 from lib import TableObjects
 from lib import utils
 import steps
-import casac
 
 def get_conf(config_file='cspam.config'):
     """
@@ -99,7 +99,6 @@ if __name__ == "__main__":
         if 'preflag' in conf['steps']:
             print 'Step: preflag'
             #steps.preflag(mset)
-            #print utils.statsFlag(mset.file_path)
 
         if 'setjy' in conf['steps']:
             print 'Step: setjy'
@@ -119,9 +118,7 @@ if __name__ == "__main__":
 
         if 'peeling' in conf['steps']:
             print 'Step: peeling'
-
-        if 'subtract' in conf['steps']:
-            print 'Step: subtract'
+            steps.peeling(mset)
 
         if 'createimage' in conf['steps']:
             print 'Step: createimage'

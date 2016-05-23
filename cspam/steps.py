@@ -1,10 +1,25 @@
-import datetime
-import logging
 import os
 import sys
+import datetime
+import logging
+import numpy as np
+import aplpy
+import matplotlib.cm
+from astropy.io import fits
+
+# CSPAM Modules
 from lib import AntennaObjects
 from lib import utils
+from lib import skymodel
 
+# The following casanova imports are somewhat ugly but importing this way
+# allows for CASA-style usage of the toolkits and tasks.
+
+# CASA Toolkits
+import casac
+cl = casac.casac.componentlist()
+
+# CASA Tasks
 from casat import plotants
 plotants = plotants.plotants
 
@@ -91,21 +106,10 @@ def preflag(mset):
         spw='0:0'
         if mset.freq > 200e6 and mset.freq < 300e6:
             spw='0:0~65' # 235 MHz +20 border
-    #
-    # This comes from Fransesco's GMRT pipeline 
-    # (two times a number of channels?)
-    #
-    #elif len(mset.nchan) == 2 and mset.nchan[0] == 128 and mset.nchan[1] == 128:
-    #    spw='0:0,1:0' # TODO: is also the chan 0 of the second spw to be flagged?
-    #    if freq > 200e6 and freq < 300e6: spw='0:0~65,1:0' # 235 MHz +20 low border
-    #
-    
-    # CHECK IF THIS IS CORRECT
     elif mset.nchan == 64:
         spw='0:0'
         if mset.freq > 200e6 and mset.freq < 300e6:
             spw='0:0~32' # 235 MHz +20 border
-    # CHECK IF ABOVE IS CORRECT
     
     else:
         logging.error('Cannot understand obs type.')
@@ -147,7 +151,7 @@ def set_flux_density_scale(mset):
     
     scans = ','.join(mset.cal_scan_ids)
     setjy(vis=mset.file_path, scan=scans, 
-          standard='Perley-Butler 2010', usescratch=True,
+          standard='Scaife-Heald 2012', usescratch=True,
           scalebychan=True)
 
 def bandpass_calibration(mset):
@@ -176,12 +180,7 @@ def bandpass_calibration(mset):
         if mset.nchan == 512: initspw = '0:240~260'
         elif mset.nchan == 256: initspw = '0:120~130'
         elif mset.nchan == 128: initspw = '0:70~80'
-        elif mset.nchan == 64: initspw = '0:40~50' # CHECK IF THIS IS CORRECT
-        #
-        # This comes from Fransesco's GMRT pipeline 
-        # (two times a number of channels?)
-        #
-        #elif len(mset.nchan) == 2 and mset.nchan[0] == 128 and mset.nchan[1] == 128: initspw = '0:70~80, 1:70~80'
+        elif mset.nchan == 64: initspw = '0:30~50'
 
         for step in ['cycle1','final']:
             # Do two bandpass calibration steps per calibrator.
@@ -312,9 +311,7 @@ def bandpass_calibration(mset):
                 # clip on residuals
                 utils.clipresidual(mset.file_path, f=cal_fieldname, s=scans)
 
-        # end of 2 bandpass cycles
         done.append(cal_fieldname)
-    # end of loop through all calibrator sources
 
     # remove K, amp from gaintables, we keep B and Kcross which are global 
     # and T-indep
@@ -447,8 +444,6 @@ def calib(mset):
             utils.FlagCal(caltablepathg+'gain'+str(cycle)+'.Ga', sigma = 3, 
                           cycles = 3)
             
-            # Note that the gain and flux calibrators are one and the same
-            # so there is no need to call fluxscale()
             utils.plotGainCal(caltablepathg+'gain'+str(cycle)+'.Ga',
                               mset.dir_plot+'/gain_cal_'+cal_fieldname,
                               amp=True)
@@ -499,6 +494,9 @@ def selfcal(mset):
     """
     logging.info("### SELFCAL")
 
+    # First, set the width to be used for splitting the target from the
+    # measurement set. This width is the number of channels to average to form
+    # one output channel.
     if mset.freq > 1000e6: width = 16
     if mset.freq > 550e6 and mset.freq < 650e6: width = 16
     if mset.freq > 300e6 and mset.freq < 350e6: width = 8
@@ -508,9 +506,11 @@ def selfcal(mset):
     width = int(width / (512/mset.nchan))
     logging.info("Average with width="+str(width))
     
+    # Perform self calibration on each target field individually
     for tgt_field_id in mset.tgt_field_ids:
         tgt_fieldname = mset.get_field_name_from_field_id(tgt_field_id)
     
+        # Create the directories
         if not os.path.isdir(mset.dir_cal+'/self_cal_'+tgt_fieldname):
             os.makedirs(mset.dir_cal+'/self_cal_'+tgt_fieldname)
         if not os.path.isdir(mset.dir_plot+'/self_cal_'+tgt_fieldname):
@@ -518,8 +518,8 @@ def selfcal(mset):
         if not os.path.isdir(mset.dir_img+'/self_cal_'+tgt_fieldname):
             os.makedirs(mset.dir_img+'/self_cal_'+tgt_fieldname)
     
-        # From now on, only use the target field -> create new MS with target
-        target_file_path = mset.file_path[:-3]+'_target.ms'
+        # Split the target field from the old measurement set
+        target_file_path = mset.file_path[:-3]+'_target_'+tgt_fieldname+'.ms'
         split(vis=mset.file_path, outputvis=target_file_path,
               field=tgt_fieldname, width=width, datacolumn='corrected',
               keepflags=False)
@@ -527,10 +527,12 @@ def selfcal(mset):
         # In order for plotcal to work a symbolic link is needed.
         # Plotcal assumes the measurement set is in the same directory
         # as the cal table.
-        syscommand = 'ln -s '+mset.file_path[:-3]+'_target.ms '+mset.dir_cal+\
-                     '/self_cal_'+ tgt_fieldname+'/'+mset.ms_name+'_target.ms'
+        syscommand = 'ln -s '+mset.file_path[:-3]+'_target_'+tgt_fieldname+\
+                     '.ms '+mset.dir_cal+'/self_cal_'+ tgt_fieldname+'/'+\
+                     mset.ms_name+'_target_'+tgt_fieldname+'.ms'
         os.system(syscommand)
     
+        # Perform several self calibration cycles.
         for cycle in xrange(6):
      
             logging.info("Start SELFCAL cycle: "+str(cycle))
@@ -546,6 +548,12 @@ def selfcal(mset):
                                  +tgt_fieldname+str(cycle)):
                 os.makedirs(mset.dir_img+'/self_cal_'+tgt_fieldname+'/'\
                             +tgt_fieldname+str(cycle))
+            
+            # The first step is to create an image, create a mask for the
+            # background and re-image with the background masked. This is done
+            # because clean tends to perform better, and is less likely to
+            # diverge, if the clean component placement is limited by a mask
+            # where real emission is expected to be.
             parms = {'vis':target_file_path, 'imagename':mset.dir_img+ \
                      '/self_cal_'+tgt_fieldname+'/'+tgt_fieldname+str(cycle)+\
                      '/im',
@@ -554,11 +562,11 @@ def selfcal(mset):
                      'imagermode':'csclean', 'imsize':sou_size, 'cell':sou_res, 
                      'weighting':'briggs', 'robust':rob, 'usescratch':True, 
                      'mask':'', 'threshold':ts, 'multiscale':[]}
-            
             utils.cleanmaskclean(parms)
 
-            # Get img rms and if it higher apply old gaintables/flags and quit
-            # "<1" is to invert the mask, this syntax is very weird, see
+            # Get the rms from this image, this is needed to compare different 
+            # cycles. "< 1" is to invert the mask, so that the rms is caculated
+            # only for the background. The syntax is very weird, see:
             # https://casa.nrao.edu/aips2_docs/notes/223/index.shtml
             mask = '"'+mset.dir_img+'/self_cal_'+tgt_fieldname+'/'\
                    +tgt_fieldname+str(cycle)+'/im.newmask'+'"'+' < 1'
@@ -566,23 +574,24 @@ def selfcal(mset):
                          +tgt_fieldname+str(cycle)+'/im-masked.image.tt0',
                          mask=mask)['rms'][0]
                          
+            # If there was a previous cycle, check if there is improvement,
+            # otherwise quit the self calibration.
             if cycle != 0 and old_rms * 1.1 < rms:
                 logging.warning('Image rms noise ('+str(rms)+' Jy/b) is higher \
                 than previous cycle ('+str(old_rms)+' Jy/b). Apply old cal \
                 tables and quitting selfcal.')
-
-                # Not sure how I will setup the peeling part
-                # rename last image so peeling doesn't use it
-                #os.system('cd img/'+s.name+' && rename s/self'+str(cycle)+'/badimage/ *')
 
                 # get previous flags
                 flagmanager(vis=target_file_path, mode='restore',
                             versionname='selfcal-c'+str(cycle-1))
                 
                 # for the first cycle just remove all calibration i.e. no selfcal
-                # for the others get the previous (i.e. cycle-2) cycle tables
+                # for the others get the previous cycle tables. This means
+                # cycle-2 since this cycle nothing happend yet, the previous
+                # one was determined to be worse than cycle-2.
                 if cycle == 1:
                     clearcal(vis=target_file_path)
+                # For the first few cycles only phase calibration is applied.
                 elif cycle < 4:
                     utils.plotGainCal(mset.dir_cal+'/self_cal_'+tgt_fieldname+\
                                       '/'+tgt_fieldname+str(cycle-2)+'.Gp', 
@@ -590,53 +599,122 @@ def selfcal(mset):
                                       '/Gp_cycle'+str(cycle-2), phase=True)
                     applycal(vis=target_file_path, gaintable=gaintable, 
                              interp=['linear','linear'], calwt=False,
-                             flagbackup=False)           
+                             flagbackup=False)
+                # For the later cycles also the amplitude is used.    
                 elif cycle >= 4: 
                     utils.plotGainCal(mset.dir_cal+'/self_cal_'+tgt_fieldname+\
-                                      '/'+tgt_fieldname+str(cycle-1)+'.Gp', 
+                                      '/'+tgt_fieldname+str(cycle-2)+'.Gp', 
                                       mset.dir_plot+'/self_cal_'+tgt_fieldname+\
-                                      '/Gp_cycle'+str(cycle-1), phase=True)
+                                      '/Gp_cycle'+str(cycle-2), phase=True)
                     utils.plotGainCal(mset.dir_cal+'/self_cal_'+tgt_fieldname+\
-                                      '/'+tgt_fieldname+str(cycle-1)+'.Ga', 
+                                      '/'+tgt_fieldname+str(cycle-2)+'.Ga', 
                                       mset.dir_plot+'/self_cal_'+tgt_fieldname+\
-                                      '/Ga_cycle'+str(cycle-1), amp=True)
+                                      '/Ga_cycle'+str(cycle-2), amp=True)
                     applycal(vis=target_file_path, gaintable=gaintable, 
                              interp=['linear','linear'], calwt=False, 
                              flagbackup=False)
-
+                # Since there is no improvement, quit the self cal loop.
                 break
-
+            # Log the new rms if it's better (or within a factor 1.1)
             elif cycle != 0:
                 logging.info('Rms noise change: '+str(old_rms)+' Jy/b -> '\
                              +str(rms)+' Jy/b.')
 
-            if cycle == 5: break # don't do one more useless calibration
-
-            old_rms = rms
-
-            # ft() model back - if clean doesn't converge clean() fails to 
-            # put the model, better do it by hand
-            ftw(vis=target_file_path, 
-                model=[mset.dir_img+'/self_cal_'+tgt_fieldname+'/'\
-                       +tgt_fieldname+str(cycle)+'/im-masked.image.tt0',
-                       mset.dir_img+'/self_cal_'+tgt_fieldname+'/'\
-                       +tgt_fieldname+str(cycle)+'/im-masked.image.tt1'],
-                nterms=2, wprojplanes=512, usescratch=True)
+            # Don't do one more useless calibration if we're in the last cycle
+            if cycle == 5: break
             
-            # recalibrating    
+            # If this is the first cycle: start with a source model created 
+            # from a catalog (NVSS, WENSS)
+            if cycle == 0:
+				# Obtain the catalog
+                direction = mset.get_direction_from_tgt_field_id(tgt_field_id)
+                m0 = direction['m0']['value'] # radians
+                m1 = direction['m1']['value'] # radians
+                ra = np.degrees(m0)
+                dec = np.degrees(m1)
+                catalog_list = skymodel.get_pb_attenuated_sources([ra,dec], 3,
+                                        mset.freq, mset.telescope, mset.band)
+
+                # Create an image showing the earlier image with
+                # the source from the catalog (just for inspection)
+                fluxlist = [i[1] for i in catalog_list]
+                normalizedfluxlist = fluxlist / max(fluxlist)
+                colors = matplotlib.cm.cool(normalizedfluxlist)
+                fitsfig = aplpy.FITSFigure(mset.dir_img+'/self_cal_'\
+                                           +tgt_fieldname+'/'+tgt_fieldname+\
+                                           str(cycle)+'/im.image.tt0.fits')
+                fitsfig.show_grayscale()
+                fitsfig.show_circles([i[0][0] for i in catalog_list], 
+                                     [i[0][1] for i in catalog_list], 0.02, 
+                                     color=colors, lw=2.5)
+                fitsfig.save(mset.dir_img+'/self_cal_'+tgt_fieldname+'/'\
+                             +tgt_fieldname+str(cycle)+\
+                             '/im.image.tt0-skymodel.png')
+                
+                # Add each source in the catalog to the component list
+                for i in catalog_list:
+                    
+                    # Obtain direction in radians
+                    m0source = np.radians(i[0][0])
+                    m1source = np.radians(i[0][1])
+
+                    # convert direction to casa format
+                    direc = {'m0': {'value': m0source, 'unit': 'rad'},  
+                             'm1': {'value': m1source, 'unit': 'rad'},  
+                             'refer': 'J2000',
+                             'type': 'direction'}
+                    flux = i[1]
+                    
+                    # Add this source to the model component list
+                    # dir is a python keyword: use a dictionary to
+                    # parse it as a variable name
+                    parms = {'flux':flux, 'fluxunit':'Jy', 'shape':'point',
+                             'dir':direc, 'freq':mset.freq}
+                    cl.addcomponent(**parms)
+                
+                # Delete catalog if it already exists
+                syscommand='rm -rf '+mset.dir_img+'/self_cal_'+tgt_fieldname+\
+                           '/'+tgt_fieldname+str(cycle)+'/catalog_component.cl'
+                os.system(syscommand)
+                
+                # Save the catalog
+                cl.rename(mset.dir_img+'/self_cal_'+tgt_fieldname+'/'\
+                          +tgt_fieldname+str(cycle)+'/catalog_component.cl')
+                           
+                # Close the catalog
+                cl.close()
+                
+                # Create the source model
+                ftw(vis=target_file_path, complist=mset.dir_img+'/self_cal_'+\
+                    tgt_fieldname+'/'+tgt_fieldname+str(cycle)+\
+                    '/catalog_component.cl', wprojplanes=512, usescratch=True)
+            
+            # If this is not the first cycle and there is improvement (we
+            # didn't quit earlier), use the earlier masked image as a source 
+            # model for the self calibration
+            else:
+                ftw(vis=target_file_path,
+                    model=[mset.dir_img+'/self_cal_'+tgt_fieldname+'/'\
+                           +tgt_fieldname+str(cycle)+'/im-masked.model.tt0',
+                           mset.dir_img+'/self_cal_'+tgt_fieldname+'/'\
+                           +tgt_fieldname+str(cycle)+'/im-masked.model.tt1'],
+                    nterms = 2, wprojplanes=512, usescratch=True)
+            
+            ## Perform the actual self calbration
+            # recalibrating
             refAntObj = AntennaObjects.RefAntHeuristics(vis=target_file_path,
                                        field='0', geometry=True, flagging=True)
             refAnt = refAntObj.calculate()[0][0]
 
             # Gaincal - phases
-            if cycle==0: 
+            if cycle==0:
                 solint='30s'
                 minsnr=4
-            if cycle==1: 
+            if cycle==1:
                 solint='15s'
                 minsnr=3
-            if cycle==2: 
-                solint='5s'
+            if cycle==2:
+                solint='int'
                 minsnr=3
             if cycle==3:
                 solint='int'
@@ -656,7 +734,7 @@ def selfcal(mset):
                     minblperant=mset.minBL_for_cal,
                     gaintable=[], calmode='p')
            
-            # Gaincal - amp
+            # Gaincal - amp (only for later cycles)
             if cycle >= 3:        
                 if cycle==3: 
                     solint='30s'
@@ -676,7 +754,7 @@ def selfcal(mset):
                               +tgt_fieldname+str(cycle)+'.Ga',
                               sigma = 3, cycles = 3)
      
-            # plot gains
+            # plot gains (amps only in later cycles)
             if cycle >= 3: 
                 utils.plotGainCal(mset.dir_cal+'/self_cal_'+tgt_fieldname+'/'\
                                   +tgt_fieldname+str(cycle)+'.Gp', 
@@ -695,8 +773,8 @@ def selfcal(mset):
                                   '/Gp_cycle'+str(cycle),
                                   phase=True)
 
-            # add to gaintable
-            if cycle >= 3: 
+            # add to gaintable (add amps only in later cycles)
+            if cycle >= 3:
                 gaintable=[mset.dir_cal+'/self_cal_'+tgt_fieldname+'/'\
                            +tgt_fieldname+str(cycle)+'.Gp',
                 	       mset.dir_cal+'/self_cal_'+tgt_fieldname+'/'\
@@ -705,25 +783,79 @@ def selfcal(mset):
                 gaintable=[mset.dir_cal+'/self_cal_'+tgt_fieldname+'/'\
                            +tgt_fieldname+str(cycle)+'.Gp',]
 
+            # Apply the newly found gains
             applycal(vis=target_file_path, field = '', gaintable=gaintable, 
                      interp=['linear','linear'], calwt=False, flagbackup=False)           
             utils.statsFlag(target_file_path, 
-                            note='After apply selfcal (cycle: '+str(cycle)+')') 
+                            note='After apply selfcal (cycle: '+str(cycle)+')')
+                            
+            # For the next cycle, the current rms becomes the old_rms
+            old_rms = rms
 
-        # end of selfcal loop
+def peeling(mset):
+    # Perform peeling on each target field individually
+    for tgt_field_id in mset.tgt_field_ids:
+        tgt_fieldname = mset.get_field_name_from_field_id(tgt_field_id)
     
-    # end of cycle on sources
+        # Create the directories
+        if not os.path.isdir(mset.dir_cal+'/peeling_'+tgt_fieldname):
+            os.makedirs(mset.dir_cal+'/peeling_'+tgt_fieldname)
+        if not os.path.isdir(mset.dir_plot+'/peeling_'+tgt_fieldname):
+            os.makedirs(mset.dir_plot+'/peeling_'+tgt_fieldname)
+        if not os.path.isdir(mset.dir_img+'/peeling_'+tgt_fieldname):
+            os.makedirs(mset.dir_img+'/peeling_'+tgt_fieldname)
 
+        # In order for plotcal to work a symbolic link is needed.
+        # Plotcal assumes the measurement set is in the same directory
+        # as the cal table.
+        syscommand = 'ln -s '+mset.file_path[:-3]+'_target_'+tgt_fieldname+\
+                     '.ms '+mset.dir_cal+'/peeling_'+ tgt_fieldname+'/'+\
+                     mset.ms_name+'_target_'+tgt_fieldname+'.ms'
+        os.system(syscommand)
+        
+        # Get path to target measurement set (they are split in selfcal)
+        target_file_path = mset.file_path[:-3]+'_target_'+tgt_fieldname+'.ms'
+        
+        # Create the pre-final image without peeling
+        path_to_currentimage = mset.dir_img+'/peeling_'+tgt_fieldname+\
+                               '/pre-peeling'
+        parms = {'vis':target_file_path, 'imagename':path_to_currentimage, 
+                 'gridmode':'widefield', 'wprojplanes':512, 'mode':'mfs', 
+                 'nterms':2, 'niter':10000, 'gain':0.1, 'psfmode':'clark', 
+                 'imagermode':'csclean', 'imsize':sou_size, 'cell':sou_res, 
+                 'weighting':'briggs', 'robust':rob, 'usescratch':True,
+                 'uvtaper':True, 'threshold':str(expnoise)+' Jy'}
+        utils.cleanmaskclean(parms, makemask=False)
+        
+        # Obtain a list of source to peel from this image
+        
+        # execute this in another python session since importing casac in 
+        # casanova messes up pybdsm
+        syscommand = 'lib/find_sources.py '+path_to_currentimage+\
+                     ' --atrous_do -c '+mset.dir_img+'/peeling_'+tgt_fieldname+\
+                     'list_of_sources.fits'
+        os.system(syscommand)
+        
+        peelcatalog = fits.open(mset.dir_img+'/peeling_'+tgt_fieldname+\
+                                'list_of_sources.fits')
+        
+        # Peel different sources
+        
 
 def createimage(mset):
     logging.info("### CREATE FINAL IMAGE")
 
-    target_file_path = mset.file_path[:-3]+'_target.ms'
+    # Create image for each target field individually
+    for tgt_field_id in mset.tgt_field_ids:
+        tgt_fieldname = mset.get_field_name_from_field_id(tgt_field_id)
 
-    parms = {'vis':target_file_path, 'imagename':target_file_path[:-3]+'_final', 'gridmode':'widefield', 'wprojplanes':512,
-           	 'mode':'mfs', 'nterms':2, 'niter':10000, 'gain':0.1, 'psfmode':'clark', 'imagermode':'csclean',
-             'imsize':sou_size, 'cell':sou_res, 'weighting':'briggs', 'robust':rob, 'usescratch':True,
-             'uvtaper':True, 'threshold':str(expnoise)+' Jy'}
-    utils.cleanmaskclean(parms, makemask=False)
+        target_file_path = mset.file_path[:-3]+'_target_'+tgt_fieldname+'.ms'
+
+        parms = {'vis':target_file_path, 'imagename':target_file_path[:-3]+'_final', 'gridmode':'widefield', 'wprojplanes':512,
+           	     'mode':'mfs', 'nterms':2, 'niter':10000, 'gain':0.1, 'psfmode':'clark', 'imagermode':'csclean',
+                 'imsize':sou_size, 'cell':sou_res, 'weighting':'briggs', 'robust':rob, 'usescratch':True,
+                 'uvtaper':True, 'threshold':str(expnoise)+' Jy'}
+        utils.cleanmaskclean(parms, makemask=False)
     
-    exportfits(imagename=target_file_path[:-3]+'_final.image.tt0',fitsimage=target_file_path[:-3]+'_final.fits',history=False)
+        # Create fits file
+        exportfits(imagename=target_file_path[:-3]+'_final.image.tt0',fitsimage=target_file_path[:-3]+'_final.fits',history=False, overwrite=True)

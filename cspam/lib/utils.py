@@ -1,14 +1,20 @@
+import os
 import casac
 import json
 import logging
 import numpy as np
 import math
-import os
+from astropy.io import fits
 
+# The following casanova imports are somewhat ugly but importing this way
+# allows for CASA-style usage of the toolkits and tasks.
+
+# CASA Toolkits
 af = casac.casac.agentflagger()
 tb = casac.casac.table()
 ms = casac.casac.ms()
 
+# CASA Tasks
 from casat import plotcal
 plotcal = plotcal.plotcal
 
@@ -20,6 +26,9 @@ uvsub = uvsub.uvsub
 
 from casat import clean
 clean = clean.clean
+
+from casat import exportfits
+exportfits = exportfits.exportfits
 
 def print_dict(dictionary):
     """
@@ -173,7 +182,7 @@ def plotGainCal(calt, plotdirectory, amp=False, phase=False, BL=False, delay=Fal
             else: plotsymbol = 'o-'
             plotcal(caltable=calt,xaxis=xaxis,yaxis='amp',antenna=antPlot,subplot=311,\
                 iteration='antenna',plotrange=[0,0,0,plotmax],plotsymbol=plotsymbol,plotcolor='red',\
-                markersize=5.0,fontsize=8.0,showgui=False,figfile=filename)
+                markersize=5.0,fontsize=8.0,showgui=False,figfile=filename,clearpanel='All')
     if phase == True:
         for ii in range(nplots):
             filename=plotdirectory+'/'+'p_'+str(ii)+'.png'
@@ -183,7 +192,7 @@ def plotGainCal(calt, plotdirectory, amp=False, phase=False, BL=False, delay=Fal
             if BL: xaxis = 'antenna2'
             else: xaxis = 'time'
             plotcal(caltable=calt,xaxis=xaxis,yaxis='phase',antenna=antPlot,subplot=311,\
-                overplot=False,clearpanel='Auto',iteration='antenna',plotrange=[0,0,-180,180],\
+                overplot=False,clearpanel='All',iteration='antenna',plotrange=[0,0,-180,180],\
                 plotsymbol='o-',plotcolor='blue',markersize=5.0,fontsize=8.0,showgui=False,\
                 figfile=filename)
     if delay == True:
@@ -193,7 +202,7 @@ def plotGainCal(calt, plotdirectory, amp=False, phase=False, BL=False, delay=Fal
             os.system(syscommand)
             antPlot=str(ii*3)+'~'+str(ii*3+2)
             plotcal(caltable=calt,xaxis='time',yaxis='delay',antenna=antPlot,subplot=311,\
-                overplot=False,clearpanel='Auto',iteration='antenna',plotrange=[],\
+                overplot=False,clearpanel='All',iteration='antenna',plotrange=[],\
                 plotsymbol='o-',markersize=5.0,fontsize=8.0,showgui=False,\
                 figfile=filename)
 
@@ -368,33 +377,39 @@ def cleanmaskclean(parms, makemask=True):
         img = parms['imagename']+'.image.tt0' # tt = Taylor terms
     else: img = parms['imagename']+'.image'
 
-    """
-    if s.extended:
-        os.system(pipdir+'/setpp.sh make_mask.py '+img+' -m'+parms['imagename']+\
-                  '.newmask --threshpix=6 --threshisl=3 --atrous_do')
-    else:
-        os.system(pipdir+'/setpp.sh make_mask.py '+img+' -m'+parms['imagename']+\
-                  '.newmask --threshpix=6 --threshisl=3')
-    """
     # Let's make the mask with a trous wavelet decomposition in any case
     # see: ftp://ftp.hs.uni-hamburg.de/pub/outgoing/rafferty/PyBDSM/PyBDSM_1.8.pdf
     # section 3.2.2
-    
-    # fetch to directory, make_mask.py is in the same directory as utils.py
+    # fetch directory, make_mask.py is in the same directory as utils.py
     libdirectory = os.path.dirname(os.path.realpath(__file__))
     # execute this in another python session since importing casac in casanova
     # messes up pybdsm
     os.system(libdirectory+'/make_mask.py '+img+' -m'+parms['imagename']+'.newmask --threshpix=6 --threshisl=3 --atrous_do')
+
+    # Create fits file (for easy inspection)
+    exportfits(imagename=parms['imagename']+'.newmask',fitsimage=parms['imagename']+'.newmask.fits',history=False, overwrite=True)
     
-    """
-    if s.mask_faint != '':
-        parms['mask']=[parms['imagename']+'.newmask',s.mask_faint]
-    else:
-        parms['mask']=parms['imagename']+'.newmask'
-    """
+    # Believe it or not, but casa exportfits creates headers with commas instead of points.
+    hdu = fits.open(parms['imagename']+'.newmask.fits')
+    hdu.verify('fix')
+    hdu.writeto(parms['imagename']+'.newmask.fits', clobber=True)
+    
     # Let's assume no faint mask
     parms['mask']=parms['imagename']+'.newmask'
     parms['imagename']=parms['imagename']+'-masked'
     parms['niter']=parms['niter']/3 # reduce number if clean iterations in masked mode
     
     clean(**parms)
+    
+    # Create fits file (for easy inspection)
+    exportfits(imagename=img,fitsimage=img+'.fits',history=False, overwrite=True)
+    exportfits(imagename=parms['imagename']+'.image.tt0',fitsimage=parms['imagename']+'.image.tt0'+'.fits',history=False, overwrite=True)
+    
+    # Believe it or not, but casa exportfits creates headers with commas instead of points.
+    hdu = fits.open(img+'.fits')
+    hdu.verify('fix')
+    hdu.writeto(img+'.fits', clobber=True)
+
+    hdu = fits.open(parms['imagename']+'.image.tt0'+'.fits')
+    hdu.verify('fix')
+    hdu.writeto(parms['imagename']+'.image.tt0'+'.fits', clobber=True)

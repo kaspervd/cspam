@@ -22,9 +22,8 @@ def make_mask(image_name, threshpix=5, threshisl=3, atrous_do=False, mask_name=N
 
     # WRITE THE MASK FITS
     if mask_name == None: mask_name = image_name+'.newmask'
-    if os.path.exists(mask_name): os.system('rm -r ' + mask_name)
     print 'Making mask:', mask_name
-    img.export_image(img_type='island_mask', img_format='casa', outfile=mask_name)
+    img.export_image(img_type='island_mask', img_format='casa', outfile=mask_name, clobber=True)
     del img
 
     # do an pixel-by-pixel "OR" operation with a given mask

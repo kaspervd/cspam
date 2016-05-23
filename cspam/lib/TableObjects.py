@@ -6,15 +6,18 @@
 # These classes come originally from cspam version 0.1 by Francesco
 # de Gasperin and Huib Intema. Edited by Kasper van Dam, 2016.
 #
-# These objects rely heavily on the CASA environment.
+# These objects rely heavily on the CASA environment interfaced using casanova.
 
-import logging
-import numpy as np
-import casac
 import os
 import sys
+import logging
+import numpy as np
+
+# CSPAM Modules
 import utils
 
+# CASA Toolkits
+import casac
 ms = casac.casac.ms()
 tb = casac.casac.table()
 
@@ -57,6 +60,8 @@ class MSObj:
     
     get_field_id_from_scan_id(scan):
 
+    get_direction_from_tgt_field_id(tgt)
+
     These are pretty much self explanatory. 
     """
 
@@ -77,9 +82,6 @@ class MSObj:
         self.dir_img = self.dir_img.replace('.MS','')
         self.dir_img = self.dir_img+'-img'
         
-        # annoying workaround to keep caltables in the same 
-        # dir of MSs, so plotcal works
-        #self.dir_cal = os.path.dirname(self.file_path) 
         self.dir_cal = self.file_path.replace('.ms','')
         self.dir_cal = self.dir_cal.replace('.MS','')
         self.dir_cal = self.dir_cal+'-cal'
@@ -169,11 +171,13 @@ class MSObj:
     def _get_band(self):
         """
         Return telescope band
+        Note that if you add more bands later on, you also need to add more
+        primary beam attenuations in skymodel.py
         """
         if self.telescope == 'GMRT':
             if self.freq > 650e6: return '1420'
-            if self.freq > 600e6 and self.freq < 650e6: return '610'
-            if self.freq > 300e6 and self.freq < 350e6: return '325'
+            if self.freq > 550e6 and self.freq < 650e6: return '610'
+            if self.freq > 250e6 and self.freq < 350e6: return '325'
             if self.freq > 200e6 and self.freq < 300e6: return '235'
             if self.freq < 200e6: return '151'
         elif self.telescope == 'EVLA':
@@ -348,25 +352,20 @@ class MSObj:
     # Public Methods
 
     def get_field_name_from_field_id(self, field):
-        """
-        Return: the source name associated with a given field id
-        """
         field_name = self.summary['field_'+str(field)]['name']
         return field_name
  
     def get_field_name_from_scan_id(self, scan):
-        """
-        Return: the source name associated with a given scan id
-        """
         field_name = self.summary['scan_'+str(scan)]['0']['FieldName']
         return field_name
 
     def get_field_id_from_scan_id(self, scan):
-        """
-        Return: the field id associated with a given scan id
-        """
         field_id = self.summary['scan_'+str(scan)]['0']['FieldId']
         return str(field_id)
+        
+    def get_direction_from_tgt_field_id(self, tgt):
+        direction = self.summary['field_'+str(tgt)]['direction']
+        return direction
 
 
 
