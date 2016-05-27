@@ -15,8 +15,8 @@ tb = casac.casac.table()
 ms = casac.casac.ms()
 
 # CASA Tasks
-from casat import plotcal
-plotcal = plotcal.plotcal
+#from casat import plotcal
+#plotcal = plotcal.plotcal
 
 from casat import flagdata
 flagdata = flagdata.flagdata
@@ -143,128 +143,6 @@ def FlagCal(caltable, sigma = 5, cycles = 3):
     totflag_after = sum(flags.flatten())
     logging.debug(caltable+": Flagged "+str(totflag_after-totflag_before)+" points out of "+str(len(flags.flatten()))+".")
     tb.close()
-
-def getMaxAmp(caltable):
-    """
-    Return maximum unflagged amp for plotting purposes
-    """
-    tb.open(caltable)
-    cpar=tb.getcol('CPARAM')
-    flgs=tb.getcol('FLAG')
-    tb.close()
-    amps=np.abs(cpar)
-    good=np.logical_not(flgs)
-    maxamp=np.max(amps[good])
-    return maxamp
-
-def plotGainCal(calt, plotdirectory, amp=False, phase=False, BL=False, delay=False):
-    """
-    Do the standard plot of gain solutions
-    """
-    if not os.path.isdir(plotdirectory):
-        os.makedirs(plotdirectory)
-    
-    tb.open( '%s/ANTENNA' % calt)
-    nameAntenna = tb.getcol( 'NAME' )
-    numAntenna = len(nameAntenna)
-    tb.close()
-    nplots=int(numAntenna/3)
-    if amp == True:
-        plotmax = getMaxAmp(calt)
-        for ii in range(nplots):
-            filename=plotdirectory+'/'+'a_'+str(ii)+'.png'
-            syscommand='rm -rf '+filename
-            os.system(syscommand)
-            antPlot=str(ii*3)+'~'+str(ii*3+2)
-            if BL: xaxis = 'antenna2'
-            else: xaxis = 'time'
-            if BL: plotsymbol = 'o'
-            else: plotsymbol = 'o-'
-            plotcal(caltable=calt,xaxis=xaxis,yaxis='amp',antenna=antPlot,subplot=311,\
-                iteration='antenna',plotrange=[0,0,0,plotmax],plotsymbol=plotsymbol,plotcolor='red',\
-                markersize=5.0,fontsize=8.0,showgui=False,figfile=filename,clearpanel='All')
-    if phase == True:
-        for ii in range(nplots):
-            filename=plotdirectory+'/'+'p_'+str(ii)+'.png'
-            syscommand='rm -rf '+filename
-            os.system(syscommand)
-            antPlot=str(ii*3)+'~'+str(ii*3+2)
-            if BL: xaxis = 'antenna2'
-            else: xaxis = 'time'
-            plotcal(caltable=calt,xaxis=xaxis,yaxis='phase',antenna=antPlot,subplot=311,\
-                overplot=False,clearpanel='All',iteration='antenna',plotrange=[0,0,-180,180],\
-                plotsymbol='o-',plotcolor='blue',markersize=5.0,fontsize=8.0,showgui=False,\
-                figfile=filename)
-    if delay == True:
-        for ii in range(nplots):
-            filename=plotdirectory+'/'+'d_'+str(ii)+'.png'
-            syscommand='rm -rf '+filename
-            os.system(syscommand)
-            antPlot=str(ii*3)+'~'+str(ii*3+2)
-            plotcal(caltable=calt,xaxis='time',yaxis='delay',antenna=antPlot,subplot=311,\
-                overplot=False,clearpanel='All',iteration='antenna',plotrange=[],\
-                plotsymbol='o-',markersize=5.0,fontsize=8.0,showgui=False,\
-                figfile=filename)
-
-def plotBPCal(calt, plotdirectory, amp=False, phase=False):
-    """
-    Do the standard plot of bandpass solutions
-    """
-    tb.open(calt)
-    dataVarCol = tb.getvarcol('CPARAM')
-    flagVarCol = tb.getvarcol('FLAG')
-    tb.close()
-    rowlist = dataVarCol.keys()
-    nrows = len(rowlist)
-    maxmaxamp = 0.0
-    maxmaxphase = 0.0
-    for rrow in rowlist:
-        dataArr = dataVarCol[rrow]
-        flagArr = flagVarCol[rrow]
-        amps=np.abs(dataArr)
-        phases=np.arctan2(np.imag(dataArr),np.real(dataArr))
-        good=np.logical_not(flagArr)
-        tmparr=amps[good]
-        if (len(tmparr)>0):
-            maxamp=np.max(amps[good])
-            if (maxamp>maxmaxamp):
-                maxmaxamp=maxamp
-        tmparr=np.abs(phases[good])
-        if (len(tmparr)>0):
-            maxphase=np.max(np.abs(phases[good]))*180./np.pi
-            if (maxphase>maxmaxphase):
-                maxmaxphase=maxphase
-    ampplotmax=maxmaxamp
-    phaseplotmax=maxmaxphase
-
-    tb.open( '%s/ANTENNA' % calt)
-    nameAntenna = tb.getcol( 'NAME' )
-    numAntenna = len(nameAntenna)
-    tb.close()
-    nplots=int(numAntenna/3)
-
-    if amp == True:
-        for ii in range(nplots):
-            filename=plotdirectory+'/'+'BP_a_'+str(ii)+'.png'
-            syscommand='rm -rf '+filename
-            os.system(syscommand)
-            antPlot=str(ii*3)+'~'+str(ii*3+2)
-            #default('plotcal')
-            plotcal(caltable=calt,xaxis='freq',yaxis='amp',antenna=antPlot,subplot=311,\
-                iteration='antenna',plotrange=[0,0,0,ampplotmax],showflags=False,plotsymbol='o',\
-                plotcolor='blue',markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
-
-    if phase == True:
-        for ii in range(nplots):
-            filename=plotdirectory+'/'+'BP_p_'+str(ii)+'.png'
-            syscommand='rm -rf '+filename
-            os.system(syscommand)
-            antPlot=str(ii*3)+'~'+str(ii*3+2)
-            #default('plotcal')
-            plotcal(caltable=calt,xaxis='freq',yaxis='phase',antenna=antPlot,subplot=311,\
-                iteration='antenna',plotrange=[0,0,-phaseplotmax,phaseplotmax],showflags=False,\
-                plotsymbol='o',plotcolor='blue',markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
-
 
 def clipresidual(active_ms, f='', s=''):
     """

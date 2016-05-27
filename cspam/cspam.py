@@ -6,7 +6,6 @@ import ConfigParser
 import argparse
 
 # CSPAM Modules
-from lib import AntennaObjects
 from lib import TableObjects
 from lib import utils
 import steps
@@ -24,7 +23,6 @@ def get_conf(config_file='cspam.config'):
 
     conf = {}
     conf['steps'] = confP.get('DEFAULT','steps').replace(' ','').split(',')
-    conf['prog_dir'] = confP.get('DEFAULT','prog_dir')
     conf['data_dir'] = confP.get('DEFAULT','data_dir')
 
     # creating MSs from sections
@@ -40,6 +38,11 @@ def get_conf(config_file='cspam.config'):
         conf[MS]['spw'] = confP.get(MS, 'spw').replace(' ','')
         conf[MS]['central_chan_percentage'] = confP.getint(
 					      MS, 'central_chan_percentage')
+        conf[MS]['flux_cal_field'] = confP.get(MS, 'flux_cal_field')
+        conf[MS]['phase_cal_field'] = confP.get(MS, 'phase_cal_field')
+        conf[MS]['leakage_cal_field'] = confP.get(MS, 'leakage_cal_field')
+        conf[MS]['position_cal_field'] = confP.get(MS, 'position_cal_field')
+        conf[MS]['angle_cal_field'] = confP.get(MS, 'angle_cal_field')
     
     return conf
 
@@ -78,7 +81,7 @@ if __name__ == "__main__":
     # Creating the list of MSs
     MSs = []
     for MSinConf in conf['MSs']:
-        MSs.append(TableObjects.MSObj(conf[MSinConf], MSinConf))
+        MSs.append(TableObjects.MSObj(conf[MSinConf]['file_path'], conf=conf[MSinConf]))
         # Note that the MSObj class might update field names in the MS
 
     # Carry out the wanted steps per measurement set
@@ -114,7 +117,7 @@ if __name__ == "__main__":
 
         if 'selfcal' in conf['steps']:
             print 'Step: selfcal'
-            steps.selfcal(mset)
+            #steps.selfcal(mset)
 
         if 'peeling' in conf['steps']:
             print 'Step: peeling'
@@ -122,6 +125,6 @@ if __name__ == "__main__":
 
         if 'createimage' in conf['steps']:
             print 'Step: createimage'
-            steps.createimage(mset)
+            #steps.createimage(mset)
 
 

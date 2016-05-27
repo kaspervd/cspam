@@ -14,12 +14,17 @@ import logging
 import numpy as np
 
 # CSPAM Modules
+import SourceObjects
 import utils
 
 # CASA Toolkits
 import casac
 ms = casac.casac.ms()
 tb = casac.casac.table()
+
+# CASA Tasks
+from casat import plotcal
+plotcal = plotcal.plotcal
 
 class MSObj:
     """
@@ -41,19 +46,22 @@ class MSObj:
     freq                  - float - reference frequency
     telescope             - str   - name of the telescope
     band                  - str   - name of the band
-    spw                   - str   - spectral window
-    central_chans         - str   - central channels
-    flag                  - dict  - flag from config in casa style
-    cal_scan_ids          - list  - calibrator scans (check coords if empty)
-    cal_field_ids         - list  - ids of calibrator fields
-    cal_scan_ids_unwanted - list  - not needed/wanted calibrator scans
-    tgt_scan_dict         - dict  - target scans associated with calibrator
-    tgt_field_ids         - list  - ids of target fields
-    tgt_scan_ids          - list  - target scans
-    uvrange               - str   - UV range
+    fluxcalibrator        - user  - user defined class with flux cal info
+    phasecalibrator       - user  - user defined class with phase cal info
+    leakcalibrator        - user  - user defined class with leakeage cal info
+    poscalibrator         - user  - user defined class with position cal info
+    anglecalibrator       - user  - user defined class with angle cal info
+    targetsources         - list  - list of target sources (user defined class)
+    *spw                   - str   - spectral window
+    *central_chans         - str   - central channels
+    *flag                  - dict  - flag from config in casa style
+
+    * = not used at the moment
 
     Available public instance methods:
     ----------------------------------
+    get_scan_ids_from_field_id(field, user_scan_ids = [])
+    
     get_field_name_from_field_id(field):
     
     get_field_name_from_scan_id(scan):
@@ -65,10 +73,16 @@ class MSObj:
     These are pretty much self explanatory. 
     """
 
-    def __init__(self, conf, name):
+    def __init__(self, path, conf = None):
+		
         # Names and paths
-        self.file_path = conf['file_path']
-        self.ms_name = name.replace('.ms','')
+        self.file_path = path
+        try:
+            occurence_last_slash = path.rfind('/')
+            self.ms_name = path[occurence_last_slash+1:]
+        except:
+            self.ms_name = path
+        self.ms_name = self.ms_name.replace('.ms','')
         self.ms_name = self.ms_name.replace('.MS','')
 
         # Measurement set summaries
@@ -106,45 +120,144 @@ class MSObj:
         # Band
         self.band = self._get_band()
         
-        # Spectral windows
-        self.spw = conf['spw']
+        # Separate the scans for the calibrator and targets
+        # Note that cal_scan_ids is an empty list if there are only targets
+        cal_scan_ids = self._determine_cal_scan_ids()
+        tgt_scan_ids = list(set(self.scansummary.keys())-set(cal_scan_ids))
         
-        # Channels
-        central_nchan = self.nchan*conf['central_chan_percentage']/100.
-        self.central_chans = str(int(round(self.nchan/2.-central_nchan/2.))) \
-                             + '~' + \
-                             str(int(round(self.nchan/2.+central_nchan/2.)))
+        cal_field_id = self.get_field_id_from_scan_id(cal_scan_ids)
 
-        # Flags (manual flag to be used with flagdata command)
-        self.flag = self._convert_flag(conf['flag']) 
+        # Start with the assumption that there is one calibrator for all types
+        # Override these parameters later if different settings exist in the
+        # configuration file.
+        
+        # Check if there are calibrators
+        if len(cal_field_id) > 0:
+            # Check if there are multiple calibrators
+            if len(cal_field_id) > 1:
+                # If there are more calibrators simply take the first and
+                # remove the scans associated with the other calibrators
+                flux_cal_field_id = cal_field_id[0]
+                flux_cal_field_name = self.get_field_name_from_field_id(
+                                           flux_cal_field_id)
+                flux_cal_scan_ids = self.get_scan_ids_from_field_id(
+                                    flux_cal_field_id, user_scan_ids=cal_scan_ids)
+            else:
+                # there is only one calibrator
+                flux_cal_field_id = cal_field_id[0]
+                flux_cal_field_name = self.get_field_name_from_field_id(
+                                           flux_cal_field_id)
+                flux_cal_scan_ids = cal_scan_ids
 
-        # Scan and field ids for the calibrator
-        ids = self._determine_cal_scan_ids(conf['cal_scans'])
-        self.cal_scan_ids = ids[0]
-        self.cal_field_ids = ids[1]
-        self.cal_scan_ids_unwanted = ids[2]
+            # One calibrator assumption so equalize everything
+            phase_cal_field_id = flux_cal_field_id
+            phase_cal_field_name = self.get_field_name_from_field_id(
+                                        phase_cal_field_id)
+            phase_cal_scan_ids = flux_cal_scan_ids
+            
+            leak_cal_field_id = flux_cal_field_id
+            leak_cal_field_name = self.get_field_name_from_field_id(
+                                       leak_cal_field_id)
+            leak_cal_scan_ids = flux_cal_scan_ids
         
-        # Target scans (dict of cal scans contining groups of 
-        # relative cal+tgt scans)
-        self.tgt_scan_dict = self._determine_tgt_scan_dict(conf['tgt_scans'])
+            pos_cal_field_id = flux_cal_field_id
+            pos_cal_field_name = self.get_field_name_from_field_id(pos_cal_field_id)
+            pos_cal_scan_ids = flux_cal_scan_ids
         
-        # Target scan and field ids (note that unwanted scans are already
-        # taken care of in _determine_tgt_scan_dict()
-        target_fids = []
-        target_cids = []
-        for i in self.tgt_scan_dict.values():
-            for ii in i:
-                if ii not in target_cids:
-                    target_cids.append(ii)
-                tgt_field_id = self.get_field_id_from_scan_id(int(ii))
-                if tgt_field_id not in target_fids:
-                    target_fids.append(tgt_field_id)
-        self.tgt_field_ids = target_fids
-        self.tgt_scan_ids = target_cids
+            angle_cal_field_id = flux_cal_field_id
+            angle_cal_field_name = self.get_field_name_from_field_id(
+                                        angle_cal_field_id)
+            angle_cal_scan_ids = flux_cal_scan_ids
         
-        # UV range
-        if self.telescope == 'GMRT': self.uvrange = '>1000m'
-        if self.telescope == 'EVLA': self.uvrange = ''
+        # Check if there is configuration file and possibly override
+        # If this mset only contains targets there is no configuration file.
+        if conf is not None:
+			
+            # See if tgt_scans/cal_scans/cal_types are set and override			
+            if conf['cal_scans']:
+                # Remove the calibrator scans that are unwanted
+                cal_scan_ids = list(set(cal_scan_ids).intersection(
+                                                      conf['cal_scans']))
+            if conf['tgt_scans']:
+                # Remove the target scans that are unwanted
+                tgt_scan_ids = list(set(tgt_scan_ids).intersection(
+                                                      conf['tgt_scans']))
+			
+            if conf['flux_cal_field']:
+                flux_cal_field_id = conf['flux_cal_field']
+                flux_cal_scan_ids = self.get_scan_ids_from_field_id(
+                                         flux_cal_field_id, 
+                                         user_scan_ids=cal_scan_ids)
+
+            if conf['phase_cal_field']:
+                phase_cal_field_id = conf['phase_cal_field']
+                phase_cal_scan_ids = self.get_scan_ids_from_field_id(
+                                         phase_cal_field_id, 
+                                         user_scan_ids=cal_scan_ids)
+
+            if conf['leakage_cal_field']:
+                leak_cal_field_id = conf['leakage_cal_field']
+                leak_cal_scan_ids = self.get_scan_ids_from_field_id(
+                                         leak_cal_field_id, 
+                                         user_scan_ids=cal_scan_ids)
+			
+            if conf['position_cal_field']:
+                pos_cal_field_id = conf['position_cal_field']
+                pos_cal_scan_ids = self.get_scan_ids_from_field_id(
+                                         pos_cal_field_id, 
+                                         user_scan_ids=cal_scan_ids)
+			
+            if conf['angle_cal_field']:
+                angle_cal_field_id = conf['angle_cal_field']
+                angle_cal_scan_ids = self.get_scan_ids_from_field_id(
+                                         angle_cal_field_id, 
+                                         user_scan_ids=cal_scan_ids)
+			
+			## The following variables (flag, spw, central_chans) aren't used yet
+            # Flags (manual flag to be used with flagdata command)
+            self.flag = self._convert_flag(conf['flag']) 
+		
+            # Spectral windows
+            self.spw = conf['spw']
+            
+            # Central channel
+            central_nchan = self.nchan*conf['central_chan_percentage']/100.
+            self.central_chans = str(int(round(self.nchan/2.-central_nchan/2.))) \
+                                 + '~' + \
+                                 str(int(round(self.nchan/2.+central_nchan/2.)))
+
+        # Check if there are calibrators
+        if len(cal_field_id) > 0:
+            # Calibrators
+            self.fluxcalibrator = SourceObjects.CalibratorSource('flux', 
+                                  flux_cal_field_name, flux_cal_field_id,
+                                  flux_cal_scan_ids)
+            self.phasecalibrator = SourceObjects.CalibratorSource('phase',
+                                   phase_cal_field_name, phase_cal_field_id,
+                                   phase_cal_scan_ids)
+            self.leakcalibrator = SourceObjects.CalibratorSource('leakage',
+                                  leak_cal_field_name, leak_cal_field_id, 
+                                  leak_cal_scan_ids)
+            self.poscalibrator = SourceObjects.CalibratorSource('position',
+                                 pos_cal_field_name, pos_cal_field_id, 
+                                 pos_cal_scan_ids)
+            self.anglecalibrator = SourceObjects.CalibratorSource('angle',
+                                   angle_cal_field_name, angle_cal_field_id, 
+                                   angle_cal_scan_ids)
+
+        # Targets (list of an arbitrary number of target sources)
+        self.targetsources = []
+        tgt_field_ids = self.get_field_id_from_scan_id(tgt_scan_ids)
+        for tgt_field_id in tgt_field_ids:
+            tgt_field_name = self.get_field_name_from_field_id(tgt_field_id)
+            tgt_scan_ids = self.get_scan_ids_from_field_id(tgt_field_id)
+            target = SourceObjects.TargetSource(tgt_field_name, tgt_field_id, 
+                                                tgt_scan_ids)
+            self.targetsources.append(target)
+        
+        # List of splitt off target measurment sets (which are also instances
+        # of this class). Note that for a target mset this list is empty.
+        self.targetmsets = []
 
 
     # Private Methods
@@ -223,7 +336,7 @@ class MSObj:
             
         return flag
 
-    def _determine_cal_scan_ids(self, usr_cal_scan_ids=['']):
+    def _determine_cal_scan_ids(self):
         """
         Save the calibrator scans in a list
         If empy list given, then check for coords
@@ -257,26 +370,16 @@ class MSObj:
                 
         ms.open(self.file_path)
         cal_scan_ids = []
-        cal_field_ids = []
-        cal_scan_ids_unwanted = []
         for cal_scan_id in self.scansummary.keys():
             cal_field_id = self.get_field_id_from_scan_id(cal_scan_id)
-            dir = ms.getfielddirmeas(fieldid=int(cal_field_id))
+            direc = ms.getfielddirmeas(fieldid=int(cal_field_id))
             # if distance with known cal is < than 60" then add it
             for known_cal, known_cal_dir in known_cals.iteritems():
                 if utils.angularSeparationOfDirectionsArcsec(
-                         dir, known_cal_dir) <= 60:
-                    if cal_scan_id not in usr_cal_scan_ids \
-                       and usr_cal_scan_ids != ['']:
-                        # user do not want this scan
-                        logging.info('Found '+known_cal+' in scan: '
-                                      +cal_scan_id+' *** Ignored')
-                        cal_scan_ids_unwanted.append(cal_scan_id)
-                    else:
-                        logging.info('Found '+known_cal+' in scan: '
-                                     +cal_scan_id)
-                        cal_scan_ids.append(cal_scan_id)
-                        cal_field_ids.append(str(cal_field_id))
+                         direc, known_cal_dir) <= 60:
+                    logging.info('Found '+known_cal+' in scan: '
+                                 +cal_scan_id)
+                    cal_scan_ids.append(cal_scan_id)
 
                     # update field name for SetJy
                     tb.open('%s/FIELD' % self.file_path, nomodify=False)
@@ -291,77 +394,62 @@ class MSObj:
         ms.close()
 
         if cal_scan_ids == []:
-            logging.critical('No calibrators found')
-            sys.exit(1)
+            logging.info('No calibrators found, this ms only contains targets')
 
-        return cal_scan_ids, list(set(cal_field_ids)), cal_scan_ids_unwanted
-
-    def _determine_tgt_scan_dict(self, usr_tgt_scan_ids=['']):
-        """
-        Set the target scans in a dict associating each calibrator 
-        to the closest in time {cal1:[tgt1,tgt2],cal2:[tgt3]}
-        if tgt_scans is given, then restrict to those scans
-        """
-
-        # getting calibrators central time
-        cal_times = {}
-        for cal_scan_id in self.cal_scan_ids:
-            begin = self.scansummary[cal_scan_id]['0']['BeginTime']
-            end = self.scansummary[cal_scan_id]['0']['EndTime']
-            cal_times[cal_scan_id] = begin+(end-begin)/2.
-
-        # finding the closest cal in time for each target
-        tgt_scans_dict = {}
-        for tgt_scan_id, tgt_scan_data in self.scansummary.iteritems():
-            if tgt_scan_id not in usr_tgt_scan_ids \
-                           and usr_tgt_scan_ids != ['']:
-                continue # scan not wanted
-            if tgt_scan_id in self.cal_scan_ids_unwanted:
-                continue # it's a discarded calibrator
-            if tgt_scan_id in self.cal_scan_ids:
-                continue # cal scan, not a tgt scan
-            
-            begin = tgt_scan_data['0']['BeginTime']
-            end = tgt_scan_data['0']['EndTime']
-            tgt_time = begin+(end-begin)/2.
-
-            min_time = np.inf
-            for cal_scan_id, cal_time in cal_times.iteritems():
-                if abs(cal_time - tgt_time) < abs(min_time - tgt_time):
-                    min_time = cal_time
-                    min_cal = cal_scan_id
-
-            # add the calibrator to the dict tgt_scans_dict
-            if not min_cal in tgt_scans_dict:
-                tgt_scans_dict[min_cal] = []
-            tgt_scans_dict[min_cal].append(tgt_scan_id)
-
-        # printing the results
-        for cal_scan_id in tgt_scans_dict:
-            logging.info('Calibrator '+cal_scan_id+
-                         ' ('+self.get_field_name_from_scan_id(cal_scan_id)
-                         +'):')
-            for tgt_scan_id in tgt_scans_dict[cal_scan_id]:
-                logging.info('\t * '+tgt_scan_id+
-                             ' ('+self.get_field_name_from_scan_id(
-                             tgt_scan_id)+') ')
-
-        return tgt_scans_dict
-
+        return cal_scan_ids
 
     # Public Methods
+
+    def get_scan_ids_from_field_id(self, field_id, user_scan_ids = []):
+        """
+        This method returns a list of scan ids for a given field_id while
+        possibly also excluding scans that are unwanted.
+        Note that user_scan_ids is a list of wanted scans.
+        """
+        scans = []
+        for scan_id in self.scansummary.keys():
+            test_field_id = self.get_field_id_from_scan_id(scan_id)
+            if int(test_field_id) == int(field_id):
+                scans.append(scan_id)
+        if len(user_scan_ids) > 0:
+            scans = list(set(scans).intersection(user_scan_ids))
+        return scans
 
     def get_field_name_from_field_id(self, field):
         field_name = self.summary['field_'+str(field)]['name']
         return field_name
  
     def get_field_name_from_scan_id(self, scan):
-        field_name = self.summary['scan_'+str(scan)]['0']['FieldName']
-        return field_name
+        """
+        this method returns the field name of a scan id 
+        or returns a list of field names of a list of scan ids
+        """
+        if isinstance(scan, list):
+            fieldnames = []
+            for i in scan:
+                field_name = self.summary['scan_'+str(i)]['0']['FieldName']
+                if field_name not in fieldnames:
+                    fieldnames.append(field_name)
+            return fieldnames
+        else:
+            field_name = self.summary['scan_'+str(scan)]['0']['FieldName']
+            return field_name
 
     def get_field_id_from_scan_id(self, scan):
-        field_id = self.summary['scan_'+str(scan)]['0']['FieldId']
-        return str(field_id)
+        """
+        This method returns the field id of a scan id 
+        or returns a list of field ids of a list of scan ids
+        """
+        if isinstance(scan, list):
+            fieldids = []
+            for i in scan:
+                field_id = self.summary['scan_'+str(i)]['0']['FieldId']
+                if field_id not in fieldids:
+                    fieldids.append(field_id)
+            return fieldids
+        else:
+            field_id = self.summary['scan_'+str(scan)]['0']['FieldId']
+            return str(field_id)
         
     def get_direction_from_tgt_field_id(self, tgt):
         direction = self.summary['field_'+str(tgt)]['direction']
@@ -375,9 +463,12 @@ class STObj:
     """
     def __init__(self, file_path):
         self.file_path = file_path
-        self.st_type = self.get_type()
+        self.st_type = self._get_type()
 
-    def get_type(self):
+    # Private Methods
+    # (actually private methods don't exist in Python, the _ is a convention)
+
+    def _get_type(self):
         """
         Return the Cal Table type
         """
@@ -386,185 +477,125 @@ class STObj:
         tb.close()
         return st_type
 
-    def get_antenna_names(self):
+    # Public Methods
+
+    def plot(self, plotdirectory, phase_only = False, amp_only = False):
         """
-        Retrun: list of antenna names
+        For G Jones tables plot both amp and phase, if phase_only is True, plot
+        only phase.
         """
-        tb.open( '%s/ANTENNA' % self.file_path)
-        antenna_names = tb.getcol( 'NAME' )
-        tb.close()
-        return antenna_names
+        if not os.path.isdir(plotdirectory):
+            os.makedirs(plotdirectory)
 
-    def get_antenna_coords(self):
-        """
-        Return: list of antenna coords
-        """
-        tb.open( '%s/ANTENNA' % self.file_path)
-        antenna_pos = tb.getcol( 'POSITION' )
-        tb.close()
-        return antenna_pos
+        if self.st_type == 'K Jones':
+            # Plot delay
+            tb.open( '%s/ANTENNA' % self.file_path)
+            nameAntenna = tb.getcol( 'NAME' )
+            numAntenna = len(nameAntenna)
+            tb.close()
+            nplots=int(numAntenna/3)
+            for ii in range(nplots):
+                filename=plotdirectory+'/'+'d_'+str(ii)+'.png'
+                syscommand='rm -rf '+filename
+                os.system(syscommand)
+                antPlot=str(ii*3)+'~'+str(ii*3+2)
+                plotcal(caltable=self.file_path,xaxis='time',yaxis='delay',antenna=antPlot,subplot=311,\
+                    overplot=False,clearpanel='All',iteration='antenna',plotrange=[],\
+                    plotsymbol='o-',markersize=5.0,fontsize=8.0,showgui=False,\
+                    figfile=filename)
+                    
+        if self.st_type == 'G Jones':
+            tb.open( '%s/ANTENNA' % self.file_path)
+            nameAntenna = tb.getcol( 'NAME' )
+            numAntenna = len(nameAntenna)
+            tb.close()
+            nplots=int(numAntenna/3)
+            # Plot amp
+            if not phase_only:
+                tb.open(self.file_path)
+                cpar=tb.getcol('CPARAM')
+                flgs=tb.getcol('FLAG')
+                tb.close()
+                amps=np.abs(cpar)
+                good=np.logical_not(flgs)
+                plotmax=np.max(amps[good])
+                BL = False # Not used in this pipeline
+                for ii in range(nplots):
+                    filename=plotdirectory+'/'+'a_'+str(ii)+'.png'
+                    syscommand='rm -rf '+filename
+                    os.system(syscommand)
+                    antPlot=str(ii*3)+'~'+str(ii*3+2)
+                    if BL: xaxis = 'antenna2'
+                    else: xaxis = 'time'
+                    if BL: plotsymbol = 'o'
+                    else: plotsymbol = 'o-'
+                    plotcal(caltable=self.file_path,xaxis=xaxis,yaxis='amp',antenna=antPlot,subplot=311,\
+                        iteration='antenna',plotrange=[0,0,0,plotmax],plotsymbol=plotsymbol,plotcolor='red',\
+                        markersize=5.0,fontsize=8.0,showgui=False,figfile=filename,clearpanel='All')
+            # Plot phase
+            if not amp_only:
+                for ii in range(nplots):
+                    filename=plotdirectory+'/'+'p_'+str(ii)+'.png'
+                    syscommand='rm -rf '+filename
+                    os.system(syscommand)
+                    antPlot=str(ii*3)+'~'+str(ii*3+2)
+                    BL = False # Not used in this pipeline
+                    if BL: xaxis = 'antenna2'
+                    else: xaxis = 'time'
+                    plotcal(caltable=self.file_path,xaxis=xaxis,yaxis='phase',antenna=antPlot,subplot=311,\
+                        overplot=False,clearpanel='All',iteration='antenna',plotrange=[0,0,-180,180],\
+                        plotsymbol='o-',plotcolor='blue',markersize=5.0,fontsize=8.0,showgui=False,\
+                        figfile=filename)
 
-    def get_source_dir(self):
-        """
-        Return: source direction
-        """
+        if self.st_type == 'B Jones':
+            # Plot bandpass
+            tb.open(self.file_path)
+            dataVarCol = tb.getvarcol('CPARAM')
+            flagVarCol = tb.getvarcol('FLAG')
+            tb.close()
+            rowlist = dataVarCol.keys()
+            nrows = len(rowlist)
+            maxmaxamp = 0.0
+            maxmaxphase = 0.0
+            for rrow in rowlist:
+                dataArr = dataVarCol[rrow]
+                flagArr = flagVarCol[rrow]
+                amps=np.abs(dataArr)
+                phases=np.arctan2(np.imag(dataArr),np.real(dataArr))
+                good=np.logical_not(flagArr)
+                tmparr=amps[good]
+                if (len(tmparr)>0):
+                    maxamp=np.max(amps[good])
+                    if (maxamp>maxmaxamp):
+                        maxmaxamp=maxamp
+                tmparr=np.abs(phases[good])
+                if (len(tmparr)>0):
+                    maxphase=np.max(np.abs(phases[good]))*180./np.pi
+                    if (maxphase>maxmaxphase):
+                        maxmaxphase=maxphase
+            ampplotmax=maxmaxamp
+            phaseplotmax=maxmaxphase
 
-    def get_col(self, colname=''):
-        """
-        Return: list of colname column content
-        non-default colnames = VAL, ERR, ANT, SPW, SCAN
-        """
-        tb.open(self.file_path)
-        if colname == 'VAL':
-            if self.st_type == 'K Jones':
-                val = tb.getcol('FPARAM')
-            else:
-                val = tb.getcol('CPARAM')
-        elif colname == 'ERR':
-            if self.st_type == 'K Jones':
-                val = tb.getcol('FPARMERR')
-            else:
-                val = tb.getcol('CPARMERR')
-        elif colname == 'TIME':
-            val = tb.getcol('TIME')
-            u = tb.getcolkeywords('TIME')['QuantumUnits'][0]
-            if u != 's':
-                val = qa.getvalue(qa.convert(qa.quantity(val, u), 's'))
-        elif colname == 'SPW':
-            val = tb.getcol('SPECTRAL_WINDOW_ID')
-        elif colname == 'SCAN':
-            val = tb.getcol('SCAN_NUMBER')
-        elif colname == 'ANT':
-            val = tb.getcol('ANTENNA1')
-        else:
-            val = tb.getcol(colname)
-        
-        tb.close()
-        return val
+            tb.open( '%s/ANTENNA' % self.file_path)
+            nameAntenna = tb.getcol( 'NAME' )
+            numAntenna = len(nameAntenna)
+            tb.close()
+            nplots=int(numAntenna/3)
 
-    def put_col(self, colname, val):
-        """
-        Set a column value
-        non-default colnames = VAL, ERR, ANT, SPW, SCAN
-        """
-        tb.open(self.file_path, nomodify=False)
-        if colname == 'VAL':
-            if self.st_type == 'K Jones':
-                val = tb.putcol('FPARAM', val)
-            else:
-                val = tb.putcol('CPARAM', val)
-        elif colname == 'ERR':
-            if self.st_type == 'K Jones':
-                val = tb.putcol('FPARMERR', val)
-            else:
-                val = tb.putcol('CPARMERR', val)
-        elif colname == 'SPW':
-            val = tb.putcol('SPECTRAL_WINDOW_ID', val)
-        elif colname == 'SCAN':
-            val = tb.putcol('SCAN_NUMBER', val)
-        elif colname == 'ANT':
-            val = tb.putcol('ANTENNA1', val)
-        else:
-            val = tb.putcol(colname, val)
-        
-        tb.close()
+            for ii in range(nplots):
+                filename=plotdirectory+'/'+'BP_a_'+str(ii)+'.png'
+                syscommand='rm -rf '+filename
+                os.system(syscommand)
+                antPlot=str(ii*3)+'~'+str(ii*3+2)
+                plotcal(caltable=self.file_path,xaxis='freq',yaxis='amp',antenna=antPlot,subplot=311,\
+                        iteration='antenna',plotrange=[0,0,0,ampplotmax],showflags=False,plotsymbol='o',\
+                        plotcolor='blue',markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
 
-
-#    def get_val_arr(self, antenna=[], spw=[], scan=[], pol=[]):
-#        """
-#        Return: multidim-array with unflagged values per antenna and spw
-#        """
-#        ant = self.get_col('ANT')
-#        ant_u = np.unique(ant).tolist()
-#        vf_ant = np.vectorize(lambda x: ant_u.index(x), otypes='i')
-#        spw = self.get_col('SPW')
-#        spw_u = np.unique(spw).tolist()
-#        vf_spw = np.vectorize(lambda x: spw_u.index(x), otypes='i')
-#        scan = self.get_col('SCAN')
-#        scan_u = np.unique(scan).tolist()
-#        vf_scan = np.vectorize(lambda x: scan_u.index(x), otypes='i')
-#        time = self.get_col('TIME')
-#        time_u = np.unique(time).tolist()
-#        vf_time = np.vectorize(lambda x: time_u.index(x), otypes='i')
-#
-#        # extract pol/chan
-#        
-#
-#        # create a 4-d matrix of ant/spw/scan/time
-#        val = self.get_col('VAL')
-#        val_matrix = np.zeros((len(np.unique(ant)), len(np.unique(spw)), len(np.unique(scan)), len(np.unique(time))), np.complex)
-#        val_matrix[vf_ant(ant), vf_spw(spw), vf_scan(scan), vf_time(time)] = val
-#        return val_matrix
-
-
-    def get_val_iter(self, return_axes=['VAL'],
-    iter_axes=['SPECTRAL_WINDOW_ID','SCAN_NUMBER','ANTENNA1']):
-        """
-        Return an iterator which iterates along SPW, SCAN, ANT
-        return_axis = 'VAL' : the returned axis
-        iter_axes = specified another set of iteration axes
-
-        Return: dict of coords and np.array of vals
-        """
-        import itertools
-        # get return axis values
-        return_axes_val = {}
-        for return_axis in return_axes:
-            assert return_axis not in iter_axes
-            return_axes_val[return_axis] = self.get_col(return_axis)
-
-        # get iter_axes unique and complete values
-        iter_axes_val = []
-        iter_axes_val_u = []
-        for iter_axis in iter_axes:
-            iter_axes_val.append(self.get_col(iter_axis))
-            iter_axes_val_u.append(np.unique(iter_axes_val[-1]))
-
-        for this_coords in list(itertools.product(*iter_axes_val_u)):
-            coords = {}
-
-            # create mask
-            mask = np.ones(len(return_axes_val[return_axes[0]]))
-            for i, iter_axis in enumerate(iter_axes):
-                mask = np.logical_and(mask, iter_axes_val[i] == this_coords[i])
-                coords[iter_axis] = this_coords[i]
-
-            # apply masks to all return_axes
-            return_axes_val_m = {}
-            for return_axis in return_axes:
-                return_axes_val_m[return_axis] = return_axes_val[return_axis][:,:,mask]
-
-            yield coords, return_axes_val_m
-
-
-    def put_val(self, coord, val, axis=''):
-        """
-        Set the subset of the "axis" column identified with coords (a dict as returned by get_val_iter)
-        coord: a dict as returned by get_val_iter
-        val: the values
-        axis: the col name (e.g. FLAG, VAL)
-        """
-        # fetch the whole column
-        val_all = self.get_col(axis)
-        # create a mask to update only selected coords
-        mask = np.zeros(shape = val_all.shape )
-        for c, cval in coord.iteritems():
-            mask[ np.where( self.get_col(c) == cval ) ] = 1
-            
-        # update the new values    
-        val_all[mask] = val
-        self.put_col(axis, val_all)
-
-
-    def get_min_max(self, aptype = 'a'):
-        """
-        Return minumum and maximum unflagged val
-        aptype can be: 'a' or 'p' (return val in rad)
-        """
-        assert aptype == 'a' or aptype == 'p'
-        if 'a' == aptype: val = np.abs( self.get_col('VAL') )
-        elif 'p' == aptype: val = np.arctan2(np.imag( self.get_col('VAL') ),np.real( self.get_col('VAL') ))
-        good = np.logical_not(self.get_col('FLAG'))
-        maxval = np.max(val[good])
-        minval = np.min(val[good])
-        return minval, maxval
+            for ii in range(nplots):
+                filename=plotdirectory+'/'+'BP_p_'+str(ii)+'.png'
+                syscommand='rm -rf '+filename
+                os.system(syscommand)
+                antPlot=str(ii*3)+'~'+str(ii*3+2)
+                plotcal(caltable=self.file_path,xaxis='freq',yaxis='phase',antenna=antPlot,subplot=311,\
+                        iteration='antenna',plotrange=[0,0,-phaseplotmax,phaseplotmax],showflags=False,\
+                        plotsymbol='o',plotcolor='blue',markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
