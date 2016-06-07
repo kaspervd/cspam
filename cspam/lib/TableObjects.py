@@ -41,6 +41,7 @@ class MSObj:
     dir_img               - str   - absolute path to the img directory
     dir_cal               - str   - absolute path to the cal directory
     dir_plot              - str   - absolute path to the plot directory
+    dir_peel              - str   - absolute path to the peel directory
     minBL_for_cal         - int   - minimum number of baselines needed
     nchan                 - int   - number of channels
     freq                  - float - reference frequency
@@ -103,7 +104,11 @@ class MSObj:
         self.dir_plot = self.file_path.replace('.ms','')
         self.dir_plot = self.dir_plot.replace('.MS','')
         self.dir_plot = self.dir_plot+'-plot'
-        
+
+        self.dir_peel = self.file_path.replace('.ms','')
+        self.dir_peel = self.dir_peel.replace('.MS','')
+        self.dir_peel = self.dir_peel+'-peel'
+                
         # Minimum number of baselines
         self.minBL_for_cal = self._get_minBL_for_cal()
         
@@ -500,9 +505,9 @@ class STObj:
                 os.system(syscommand)
                 antPlot=str(ii*3)+'~'+str(ii*3+2)
                 plotcal(caltable=self.file_path,xaxis='time',yaxis='delay',antenna=antPlot,subplot=311,\
-                    overplot=False,clearpanel='All',iteration='antenna',plotrange=[],\
-                    plotsymbol='o-',markersize=5.0,fontsize=8.0,showgui=False,\
-                    figfile=filename)
+                        overplot=False,clearpanel='All',iteration='antenna',plotrange=[],\
+                        plotsymbol='o-',markersize=5.0,fontsize=8.0,showgui=False,\
+                        figfile=filename)
                     
         if self.st_type == 'G Jones':
             tb.open( '%s/ANTENNA' % self.file_path)
@@ -530,8 +535,8 @@ class STObj:
                     if BL: plotsymbol = 'o'
                     else: plotsymbol = 'o-'
                     plotcal(caltable=self.file_path,xaxis=xaxis,yaxis='amp',antenna=antPlot,subplot=311,\
-                        iteration='antenna',plotrange=[0,0,0,plotmax],plotsymbol=plotsymbol,plotcolor='red',\
-                        markersize=5.0,fontsize=8.0,showgui=False,figfile=filename,clearpanel='All')
+                            iteration='antenna',plotrange=[0,0,0,plotmax],plotsymbol=plotsymbol,plotcolor='red',\
+                            markersize=5.0,fontsize=8.0,showgui=False,figfile=filename,clearpanel='All')
             # Plot phase
             if not amp_only:
                 for ii in range(nplots):
@@ -543,9 +548,9 @@ class STObj:
                     if BL: xaxis = 'antenna2'
                     else: xaxis = 'time'
                     plotcal(caltable=self.file_path,xaxis=xaxis,yaxis='phase',antenna=antPlot,subplot=311,\
-                        overplot=False,clearpanel='All',iteration='antenna',plotrange=[0,0,-180,180],\
-                        plotsymbol='o-',plotcolor='blue',markersize=5.0,fontsize=8.0,showgui=False,\
-                        figfile=filename)
+                            overplot=False,clearpanel='All',iteration='antenna',plotrange=[0,0,-180,180],\
+                            plotsymbol='o-',plotcolor='blue',markersize=5.0,fontsize=8.0,showgui=False,\
+                            figfile=filename)
 
         if self.st_type == 'B Jones':
             # Plot bandpass

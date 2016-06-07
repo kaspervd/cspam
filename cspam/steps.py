@@ -12,6 +12,7 @@ from lib import AntennaObjects
 from lib import TableObjects
 from lib import utils
 from lib import skymodel
+from lib import peel
 
 # The following casanova imports are somewhat ugly but importing this way
 # allows for CASA-style usage of the toolkits and tasks.
@@ -68,6 +69,9 @@ clearcal = clearcal.clearcal
 
 from casat import exportfits
 exportfits = exportfits.exportfits
+
+from casat import clean
+clean = clean.clean
 
 sou_res = ['1arcsec']
 sou_size = [5000]
@@ -609,11 +613,6 @@ def selfcal(mset):
                     Gp_prev = target.self_cal_gp_tables[-2]
                     Gp_prev.plot(mset.dir_plot+target.extend_dir+'/Gp_cycle'+str(cycle-2), phase_only=True)
                     
-                    #utils.plotGainCal(mset.dir_cal+target.extend_dir+\
-                    #                  '/'+target.field_name+str(cycle-2)+'.Gp', 
-                    #                  mset.dir_plot+target.extend_dir+\
-                    #                  '/Gp_cycle'+str(cycle-2), phase=True)
-                    
                     applycal(vis=target_file_path, gaintable=gaintable, 
                              interp=['linear','linear'], calwt=False,
                              flagbackup=False)
@@ -622,18 +621,8 @@ def selfcal(mset):
                     Gp_prev = target.self_cal_gp_tables[-2]
                     Gp_prev.plot(mset.dir_plot+target.extend_dir+'/Gp_cycle'+str(cycle-2))
                     
-                    #utils.plotGainCal(mset.dir_cal+target.extend_dir+\
-                    #                  '/'+target.field_name+str(cycle-2)+'.Gp', 
-                    #                  mset.dir_plot+target.extend_dir+\
-                    #                  '/Gp_cycle'+str(cycle-2), phase=True)
-                    
                     Ga_prev = target.self_cal_ga_tables[-2]
                     Ga_prev.plot(mset.dir_plot+target.extend_dir+'/Gp_cycle'+str(cycle-2), amp_only=True)
-                    
-                    #utils.plotGainCal(mset.dir_cal+target.extend_dir+\
-                    #                  '/'+target.field_name+str(cycle-2)+'.Ga', 
-                    #                  mset.dir_plot+target.extend_dir+\
-                    #                  '/Ga_cycle'+str(cycle-2), amp=True)
                     
                     applycal(vis=target_file_path, gaintable=gaintable, 
                              interp=['linear','linear'], calwt=False, 
@@ -649,7 +638,7 @@ def selfcal(mset):
             if cycle == 5: break
             
             # If this is the first cycle: start with a source model created 
-            # from a catalog (NVSS, WENSS)
+            # from a catalog (e.g. NVSS, WENSS)
             if cycle == 0:
                 # Obtain the catalog
                 direction = mset.get_direction_from_tgt_field_id(target.field_id)
@@ -784,24 +773,9 @@ def selfcal(mset):
             # plot gains (amps only in later cycles)
             if cycle >= 3:
                 Gp.plot(mset.dir_plot+target.extend_dir+'/Gp_cycle'+str(cycle), phase_only=True)
-                #utils.plotGainCal(mset.dir_cal+target.extend_dir+'/'\
-                #                  +target.field_name+str(cycle)+'.Gp', 
-                #                  mset.dir_plot+target.extend_dir+\
-                #                  '/Gp_cycle'+str(cycle),
-                #                  phase=True)
                 Ga.plot(mset.dir_plot+target.extend_dir+'/Ga_cycle'+str(cycle), amp_only=True)
-                #utils.plotGainCal(mset.dir_cal+target.extend_dir+'/'\
-                #                  +target.field_name+str(cycle)+'.Ga', 
-                #                  mset.dir_plot+target.extend_dir+\
-                #                  '/Ga_cycle'+str(cycle),
-                #                  amp=True)
             else:
                 Gp.plot(mset.dir_plot+target.extend_dir+'/Gp_cycle'+str(cycle), phase_only=True)
-                #utils.plotGainCal(mset.dir_cal+target.extend_dir+'/'\
-                #                  +target.field_name+str(cycle)+'.Gp', 
-                #                  mset.dir_plot+target.extend_dir+\
-                #                  '/Gp_cycle'+str(cycle),
-                #                  phase=True)
 
             # add to gaintable (add amps only in later cycles)
             if cycle >= 3:
@@ -829,62 +803,185 @@ def peeling(mset):
         # This measurement set only has one target
         tgt_fieldname = target_mset.targetsources[0].field_name
     
-        extend_dir = '/peeling_'+tgt_fieldname
+        # Determine the total number of integrations in this dataset
+        total_integration_time = target_mset.summary['IntegrationTime']
+        integration_times = []
+        for cal_scan_id in target_mset.scansummary.keys():
+            integration_times.append(target_mset.summary['scan_%i' % int(cal_scan_id)]
+                                     ['0']['IntegrationTime'])
+        # The integration time per scan may vary, the median is a good measure
+        integration_time = np.median(integration_times)
+        number_of_integrations = total_integration_time / integration_time
+    
+        extend_dir = '/'+tgt_fieldname
         # Create the directories
-        if not os.path.isdir(mset.dir_cal+extend_dir):
-            os.makedirs(mset.dir_cal+extend_dir)
-        if not os.path.isdir(mset.dir_plot+extend_dir):
-            os.makedirs(mset.dir_plot+extend_dir)
-        if not os.path.isdir(mset.dir_img+extend_dir):
-            os.makedirs(mset.dir_img+extend_dir)
+        if not os.path.isdir(mset.dir_peel+extend_dir):
+            os.makedirs(mset.dir_peel+extend_dir)
+        if not os.path.isdir(mset.dir_peel+extend_dir+'/pre'):
+            os.makedirs(mset.dir_peel+extend_dir+'/pre')
 
-        # In order for plotcal to work a symbolic link is needed.
-        # Plotcal assumes the measurement set is in the same directory
-        # as the cal table.
-        syscommand = 'ln -s '+mset.file_path[:-3]+'_target_'+tgt_fieldname+\
-                     '.ms '+mset.dir_cal+extend_dir+'/'+\
-                     mset.ms_name+'_target_'+tgt_fieldname+'.ms'
-        os.system(syscommand)
-        
-        # Create the pre-final image without peeling
-        path_to_currentimage = mset.dir_img+extend_dir+'/pre-peeling'
+        # Create the pre-peeling image before peeling
+        path_to_currentimage = mset.dir_peel+extend_dir+'/pre/pre-peeling'
         parms = {'vis':target_mset.file_path, 'imagename':path_to_currentimage, 
                  'gridmode':'widefield', 'wprojplanes':512, 'mode':'mfs', 
                  'nterms':2, 'niter':10000, 'gain':0.1, 'psfmode':'clark', 
                  'imagermode':'csclean', 'imsize':sou_size, 'cell':sou_res, 
                  'weighting':'briggs', 'robust':rob, 'usescratch':True,
                  'uvtaper':True, 'threshold':str(expnoise)+' Jy'}
-        utils.cleanmaskclean(parms, makemask=False)
+        #utils.cleanmaskclean(parms)
         
-        # Obtain a list of source to peel from this image
-        
+        # Obtain a list of source in this image
         # execute this in another python session since importing casac in 
         # casanova messes up pybdsm
-        syscommand = 'lib/find_sources.py '+path_to_currentimage+\
-                     ' --atrous_do -c '+mset.dir_img+'/peeling_'+tgt_fieldname+\
-                     '/list_of_sources.fits'
-        os.system(syscommand)
+        syscommand = 'lib/find_sources.py '+path_to_currentimage+'-masked.image.tt0'+\
+                     ' -c '+mset.dir_peel+extend_dir+\
+                     '/list_of_sources.fits --atrous_do'
+        #os.system(syscommand)
         
-        peelcatalog = fits.open(mset.dir_img+'/peeling_'+tgt_fieldname+\
+        peelcatalog = fits.open(mset.dir_peel+extend_dir+\
                                 '/list_of_sources.fits')
+        peel_cat_data = peelcatalog[1].data
+        peel_cat_dec = peel_cat_data['DEC']
+        peel_cat_ra = peel_cat_data['RA']
         
-        # Peel different sources
+        # Use these parameters to select sources that are suitable for peeling
+        peel_cat_tflux = peel_cat_data['Total_flux']
+        peel_cat_pflux = peel_cat_data['Peak_flux']
+        peel_cat_isl_rms = peel_cat_data['Isl_rms']
+
+        # Use total_flux, peak_flux, source_code, rms to determine if the
+        # source is suitable.
+        peelsources = []
+        radeclist = []
+        
+        peel_radius_in_arcmin = 7
+        
+        for ra, dec, tflux, pflux, rms in zip(peel_cat_ra, peel_cat_dec, 
+                                              peel_cat_tflux, peel_cat_pflux,
+                                              peel_cat_isl_rms):
+            pnr = pflux/rms
+            snr = tflux/rms
+            
+            qualityfactor = 0.5
+            qualitymeasure = pnr**(qualityfactor)*snr**(1-qualityfactor)
+
+            if qualitymeasure > 50:
+                # Now, also check if the peel patches don't overlap
+                diff_large_enough = True
+                for othersource in radeclist:
+                    other_ra = othersource[0]
+                    other_dec = othersource[1]
+                    difference = ((ra-other_ra)**2.0 + (dec-other_dec)**2.0)**.5
+                    
+                    # I demand more than 2/3 separation in diameter
+                    if difference < (2./3.) * (2*peel_radius_in_arcmin) * 0.01667:
+                        diff_large_enough = False
+                
+                if diff_large_enough:
+                    peelsources.append([ra, dec, snr, pnr, rms, pflux, tflux])
+                
+                radeclist.append([ra, dec])
+
+        # Sort the peel sources in order of decreasing peak flux to noise ratio
+        peelsources.sort(key=lambda x: x[2], reverse=True)        
+        # Create an image showing the earlier image with the potential sources to peel
+        fitsfig = aplpy.FITSFigure(path_to_currentimage+'-masked.image.tt0.fits')
+        fitsfig.show_grayscale()
+        fitsfig.show_circles([i[0] for i in peelsources],
+                             [i[1] for i in peelsources], peel_radius_in_arcmin*0.01667, lw=2.5) # 0.01667 degrees is an arcmin
+        fitsfig.save(path_to_currentimage+'-masked.image.tt0.fits.potential_sources.png')
+
+        # Now that we have a list of sources to peel, calculate for each source
+        # the solution interval. Determine the solution interval needed to obtain
+        # a certain SNR but also reject the source if the solution interval is
+        # too large.
+        min_SNR_per_solution_interval = 15
+        fudge_factor = 2.0**0.5
+        peelsourcesupdated = []
+        for source in peelsources:
+            snr = source[2]
+            pnr = source[3]
+            rms = source[4]
+            pflux = source[5]
+            tflux = source[6]
+            
+            noise_per_interval = rms * (number_of_integrations)**0.5
+            snr_per_interval = tflux/noise_per_interval
+            time_steps_needed = ((min_SNR_per_solution_interval/fudge_factor)/snr_per_interval)**2.0 # SNR grows with sqrt(time)
+            time_needed_in_sec = integration_time*time_steps_needed
+            
+            if time_needed_in_sec < 120:
+                solint = '%.1fs' % time_needed_in_sec
+                source.append(solint)
+                peelsourcesupdated.append(source)
+        
+        # Create an image showing the earlier image with the final sources to peel
+        fitsfig = aplpy.FITSFigure(path_to_currentimage+'-masked.image.tt0.fits')
+        fitsfig.show_grayscale()
+        fitsfig.show_circles([i[0] for i in peelsourcesupdated],
+                             [i[1] for i in peelsourcesupdated], peel_radius_in_arcmin*0.01667, lw=2.5) # 0.01667 degrees is an arcmin
+        fitsfig.save(path_to_currentimage+'-masked.image.tt0.fits.final_sources.png')
+        
+        # Create a residual image needed for peeling (i.e.: add peel source to
+        # residual image, self calibrate, remove peel source and use updated
+        # residual image for further peeling.
+        prepeelingmodels = [path_to_currentimage+'-masked.model.tt0',
+                            path_to_currentimage+'-masked.model.tt1']
+        peel.subtract(target_mset.file_path, prepeelingmodels, wprojplanes=512)
+        residualMSpath = mset.dir_peel+extend_dir+'/'+target_mset.ms_name+'_residual.ms'
+        split(vis=target_mset.file_path, outputvis=residualMSpath)
+        residualMS = TableObjects.MSObj(residualMSpath)
+        
+        
+        clean(vis=residualMS.file_path, imagename=residualMS.file_path+'_residual', 
+              gridmode='widefield', wprojplanes=512, mode='mfs',
+              niter=5000, gain=0.1, psfmode='clark', imagermode='csclean', 
+              interactive=False, imsize=sou_size, cell=sou_res,
+              stokes='I', nterms=2, weighting='briggs', robust=rob,
+              usescratch=True)
+        exportfits(imagename=residualMS.file_path+'_residual.image.tt0',
+               fitsimage=residualMS.file_path+'_residual.image.tt0.fits',
+               history=False, overwrite=True)
+        
+        # Peel all sources
+        for i, source in enumerate(peelsourcesupdated):
+            ra = source[0]
+            dec = source[1]
+            solint = source[7]
+            if not os.path.isdir(mset.dir_peel+extend_dir+'/region'+str(i+1)):
+                os.makedirs(mset.dir_peel+extend_dir+'/region'+str(i+1))
+
+            # For each source create a directory named region# with a region 
+            # file in it describing the source                
+            with open(mset.dir_peel+extend_dir+'/region'+str(i+1)+'/region.crtf', 'w') as regionfile:
+                string_format = utils.deg2HMS(ra=ra, dec=dec)
+                ra_string = string_format[0]
+                dec_string = string_format[1]
+                regionfile.write('#CRTFv0')
+                regionfile.write('\n')
+                regionfile.write('circle[['+ra_string+', '+dec_string+'], 30arcmin]')
+        
+            peel.peel(residualMS, prepeelingmodels, mset.dir_peel+extend_dir+'/region'+str(i+1), solint)
+            
+            sys.exit()
+
         
 
 def createimage(mset):
     logging.info("### CREATE FINAL IMAGE")
 
     # Create image for each target field individually
-    for tgt_field_id in mset.tgt_field_ids:
-        tgt_fieldname = mset.get_field_name_from_field_id(tgt_field_id)
+    for target_mset in mset.targetmsets:
+        # This measurement set only has one target
+        tgt_fieldname = target_mset.targetsources[0].field_name
 
-        target_file_path = mset.file_path[:-3]+'_target_'+tgt_fieldname+'.ms'
-
-        parms = {'vis':target_file_path, 'imagename':target_file_path[:-3]+'_final', 'gridmode':'widefield', 'wprojplanes':512,
+        parms = {'vis':target_mset.file_path, 'imagename':target_mset.file_path[:-3]+'_final', 'gridmode':'widefield', 'wprojplanes':512,
                  'mode':'mfs', 'nterms':2, 'niter':10000, 'gain':0.1, 'psfmode':'clark', 'imagermode':'csclean',
                  'imsize':sou_size, 'cell':sou_res, 'weighting':'briggs', 'robust':rob, 'usescratch':True,
                  'uvtaper':True, 'threshold':str(expnoise)+' Jy'}
         utils.cleanmaskclean(parms, makemask=False)
     
         # Create fits file
-        exportfits(imagename=target_file_path[:-3]+'_final.image.tt0',fitsimage=target_file_path[:-3]+'_final.fits',history=False, overwrite=True)
+        exportfits(imagename=target_mset.file_path[:-3]+'_final.image.tt0',
+                   fitsimage=target_mset.file_path[:-3]+'_final.fits',
+                   history=False, overwrite=True)

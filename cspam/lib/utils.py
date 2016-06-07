@@ -267,7 +267,7 @@ def cleanmaskclean(parms, makemask=True):
     # Create fits file (for easy inspection)
     exportfits(imagename=parms['imagename']+'.newmask',fitsimage=parms['imagename']+'.newmask.fits',history=False, overwrite=True)
     
-    # Believe it or not, but casa exportfits creates headers with commas instead of points.
+    # Casa exportfits sometimes creates headers with commas instead of points.
     hdu = fits.open(parms['imagename']+'.newmask.fits')
     hdu.verify('fix')
     hdu.writeto(parms['imagename']+'.newmask.fits', clobber=True)
@@ -283,7 +283,7 @@ def cleanmaskclean(parms, makemask=True):
     exportfits(imagename=img,fitsimage=img+'.fits',history=False, overwrite=True)
     exportfits(imagename=parms['imagename']+'.image.tt0',fitsimage=parms['imagename']+'.image.tt0'+'.fits',history=False, overwrite=True)
     
-    # Believe it or not, but casa exportfits creates headers with commas instead of points.
+    # Casa exportfits sometimes creates headers with commas instead of points.
     hdu = fits.open(img+'.fits')
     hdu.verify('fix')
     hdu.writeto(img+'.fits', clobber=True)
@@ -291,3 +291,33 @@ def cleanmaskclean(parms, makemask=True):
     hdu = fits.open(parms['imagename']+'.image.tt0'+'.fits')
     hdu.verify('fix')
     hdu.writeto(parms['imagename']+'.image.tt0'+'.fits', clobber=True)
+
+
+def deg2HMS(ra='', dec='', round=True):
+    RA, DEC, rs, ds = '', '', '', ''
+    if dec:
+        if str(dec)[0] == '-':
+            ds, dec = '-', abs(dec)
+        deg = int(dec)
+        decM = abs(int((dec-deg)*60))
+        if round:
+            decS = int((abs((dec-deg)*60)-decM)*60)
+        else:
+            decS = (abs((dec-deg)*60)-decM)*60
+        DEC = '{0}{1}d{2}m{3}s'.format(ds, deg, decM, decS)
+  
+    if ra:
+        if str(ra)[0] == '-':
+            rs, ra = '-', abs(ra)
+        raH = int(ra/15)
+        raM = int(((ra/15)-raH)*60)
+        if round:
+            raS = int(((((ra/15)-raH)*60)-raM)*60)
+        else:
+            raS = ((((ra/15)-raH)*60)-raM)*60
+        RA = '{0}{1}h{2}m{3}s'.format(rs, raH, raM, raS)
+  
+    if ra and dec:
+        return (RA, DEC)
+    else:
+        return RA or DEC

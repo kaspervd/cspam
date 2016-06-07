@@ -93,6 +93,8 @@ if __name__ == "__main__":
             os.makedirs(mset.dir_plot)
         if not os.path.isdir(mset.dir_cal):
             os.makedirs(mset.dir_cal)
+        if not os.path.isdir(mset.dir_peel):
+            os.makedirs(mset.dir_peel)
 
         # Execute the wanted steps
         if 'plots' in conf['steps']:
