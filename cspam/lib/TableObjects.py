@@ -12,6 +12,7 @@ import os
 import sys
 import logging
 import numpy as np
+from scipy import interpolate
 
 # CSPAM Modules
 import SourceObjects
@@ -459,6 +460,12 @@ class MSObj:
     def get_direction_from_tgt_field_id(self, tgt):
         direction = self.summary['field_'+str(tgt)]['direction']
         return direction
+        
+    def get_all_available_timestamps(self):
+        tb.open(self.file_path)
+        timestamps = tb.getcol('TIME')
+        tb.close()
+        return timestamps
 
 
 
@@ -494,10 +501,17 @@ class STObj:
 
         if self.st_type == 'K Jones':
             # Plot delay
-            tb.open( '%s/ANTENNA' % self.file_path)
-            nameAntenna = tb.getcol( 'NAME' )
+            #tb.open( '%s/ANTENNA' % self.file_path)
+            #nameAntenna = tb.getcol( 'NAME' )
+            #numAntenna = len(nameAntenna)
+            #tb.close()
+            
+            tb.open(self.file_path)
+            ants1 = tb.getcol('ANTENNA1') # Antenna
+            nameAntenna = np.sort(np.unique(ants1))
             numAntenna = len(nameAntenna)
             tb.close()
+            
             nplots=int(numAntenna/3)
             for ii in range(nplots):
                 filename=plotdirectory+'/'+'d_'+str(ii)+'.png'
@@ -510,10 +524,17 @@ class STObj:
                         figfile=filename)
                     
         if self.st_type == 'G Jones':
-            tb.open( '%s/ANTENNA' % self.file_path)
-            nameAntenna = tb.getcol( 'NAME' )
+            #tb.open( '%s/ANTENNA' % self.file_path)
+            #nameAntenna = tb.getcol( 'NAME' )
+            #numAntenna = len(nameAntenna)
+            #tb.close()
+            
+            tb.open(self.file_path)
+            ants1 = tb.getcol('ANTENNA1') # Antenna
+            nameAntenna = np.sort(np.unique(ants1))
             numAntenna = len(nameAntenna)
             tb.close()
+            
             nplots=int(numAntenna/3)
             # Plot amp
             if not phase_only:
@@ -581,10 +602,17 @@ class STObj:
             ampplotmax=maxmaxamp
             phaseplotmax=maxmaxphase
 
-            tb.open( '%s/ANTENNA' % self.file_path)
-            nameAntenna = tb.getcol( 'NAME' )
+            #tb.open( '%s/ANTENNA' % self.file_path)
+            #nameAntenna = tb.getcol( 'NAME' )
+            #numAntenna = len(nameAntenna)
+            #tb.close()
+            
+            tb.open(self.file_path)
+            ants1 = tb.getcol('ANTENNA1') # Antenna
+            nameAntenna = np.sort(np.unique(ants1))
             numAntenna = len(nameAntenna)
             tb.close()
+            
             nplots=int(numAntenna/3)
 
             for ii in range(nplots):
@@ -604,3 +632,546 @@ class STObj:
                 plotcal(caltable=self.file_path,xaxis='freq',yaxis='phase',antenna=antPlot,subplot=311,\
                         iteration='antenna',plotrange=[0,0,-phaseplotmax,phaseplotmax],showflags=False,\
                         plotsymbol='o',plotcolor='blue',markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
+
+	def create_inverted_table(self):
+		"""
+		Invert a calibration table and return the new calibration table path
+		"""
+		syscommand = "cp -r "+self.file_path+" "+self.file_path+"_inv"
+		os.system(syscommand)
+		caltab = self.file_path+"_inv"
+		tb.open(caltab, nomodify=False) # open the caltable
+		gVals = tb.getcol('CPARAM')#, startrow=start, nrow=incr) # get the values from the GAIN column
+		mask = abs(gVals) > 0.0 # only consider non-zero values
+		gVals[mask] = 1.0 / gVals[mask] # do the inversion
+		tb.putcol('CPARAM', gVals)#, startrow=start, nrow=incr) # replace the GAIN values with the inverted values
+		tb.close() # close the table
+		return caltab
+
+    def re_reference_table(self, refant=1):
+        """
+        CASA's gaincal changes the reference antenna if the previous reference
+        antenna is flagged. This method sets the varying reference antennas to 
+        one antenna.
+        """
+
+        # Create a copy of the calibration table
+        syscommand = 'rm -rf '+self.file_path+"_reref"
+        os.system(syscommand)
+        syscommand = "cp -rf "+self.file_path+" "+self.file_path+"_reref"
+        os.system(syscommand)
+        caltab = self.file_path+"_reref"
+
+        # Open the calibration table and fetch needed parameters
+        tb.open(caltab, nomodify=False)
+        times = tb.getcol('TIME')
+        gains = tb.getcol('CPARAM')
+        gainsRR = gains[0,0,:] # RR polarization
+        gainsLL = gains[1,0,:] # LL polarization
+        ants1 = tb.getcol('ANTENNA1') # Antenna
+        ants2 = tb.getcol('ANTENNA2') # Current reference antenna
+        flags = tb.getcol('FLAG')
+        flagsRR = flags[0,0,:] # RR polarization
+        flagsLL = flags[1,0,:] # LL polarization
+
+        # Create empty lists to be filled
+        updatedRefant = []
+        updatedgainRR = []
+        updatedgainLL = []
+        updatedflagRR = []
+        updatedflagLL = []
+        
+        # Create numpy array for easy access (drawback is that all values in
+        # this 2D array are complex numbers now)
+        table = np.column_stack((times, ants1, ants2, gainsRR, gainsLL, flagsRR, flagsLL))
+        for time, ant1, ant2, gRR, gLL, fRR, fLL in table:
+            if int(np.real(ant2)) is not refant:
+                # This gain needs to be re-referenced. In order to do this we
+                # need the gain corresponding with the new reference antenna.
+                # I.e.:  g    = g    . g*   / |g   |
+                #         i,n    i,o    n,o     n,o
+                # where n is the new reference antenna, o the old one, | |
+                # denotes the absolute value and * is the complex conjugate.
+
+                # Find the gain relating the old reference antenna to the new
+                # one.
+                rerefgainRR = None
+                rerefgainLL = None
+                rerefflagRR = None
+                rerefflagLL = None
+                for time_2, ant1_2, ant2_2, gRR_2, gLL_2, fRR_2, fLL_2 in table:
+                    if time_2 == time and int(np.real(ant1_2)) == refant and ant2_2 == ant2:
+                        # This is the gain we need for re-referencing.
+                        rerefgainRR = gRR_2
+                        rerefgainLL = gLL_2
+                        rerefflagRR = fRR_2
+                        rerefflagLL = fLL_2
+                        break # No need to search any further
+                
+                # Quit if no re-reference gain was found.
+                if rerefgainRR == None:
+                    print 'Unable to find correct antenna for re-referencing'
+                    sys.exit()
+                
+                # Calculate new gains with respect to new reference antenna
+                newgainRR = gRR * np.conj(rerefgainRR) / np.absolute(rerefgainRR)
+                newgainLL = gLL * np.conj(rerefgainLL) / np.absolute(rerefgainLL)
+                
+                # Set flags to false if one of antennas is flagged
+                newflagRR = True
+                if bool(np.real(rerefflagRR)) is False and bool(np.real(fRR)) is False:
+                    newflagRR = False
+                
+                newflagLL = True
+                if bool(np.real(rerefflagLL)) is False and bool(np.real(fLL)) is False:
+                    newflagLL = False
+                
+                # Correct for the fact that np.column_stack casts all values tp
+                # complex numbers.
+                updatedRefant.append( refant )
+                updatedgainRR.append( newgainRR )
+                updatedgainLL.append( newgainLL )
+                updatedflagRR.append( newflagRR )
+                updatedflagLL.append( newflagLL )
+            else:
+                # This gain is OK
+                # Correct for the fact that np.column_stack casts all values tp
+                # complex numbers.
+                updatedRefant.append( int(np.real(ant2)) )
+                updatedgainRR.append( gRR )
+                updatedgainLL.append( gLL )
+                updatedflagRR.append( bool(np.real(fRR)) )
+                updatedflagLL.append( bool(np.real(fLL)) )
+                        
+        # Add new data to existing calibration table
+        gains[0,0,:] = updatedgainRR
+        gains[1,0,:] = updatedgainLL
+        ants2 = updatedRefant
+        flags[0,0,:] = updatedflagRR
+        flags[1,0,:] = updatedflagLL
+
+        tb.putcol('CPARAM', gains)
+        tb.putcol('ANTENNA2', ants2)
+        tb.putcol('FLAG', flags)
+
+        tb.close()
+
+        return caltab
+
+    def normalize_reference_antenna(self):
+        """
+        Somehow, the calibration tables created by CASA's gaincal have a
+        changing constant offset with respect to the reference antenna. For
+        example, one would expect the reference antenna to have a phase of zero
+        everywhere (after all, your measure the phase with respect to the phase
+        of the reference antenna), but this is not the case. The phase of the
+        reference antenna changes with constant values in time. This method
+        corrects for this.
+        """
+
+        # Create a copy of the calibration table
+        syscommand = 'rm -rf '+self.file_path+"_normref"
+        os.system(syscommand)
+        syscommand = "cp -rf "+self.file_path+" "+self.file_path+"_normref"
+        os.system(syscommand)
+        caltab = self.file_path+"_normref"
+
+        # Open the calibration table and fetch needed parameters
+        tb.open(caltab, nomodify=False)
+        times = tb.getcol('TIME')
+        gains = tb.getcol('CPARAM')
+        gainsRR = gains[0,0,:] # RR polarization
+        gainsLL = gains[1,0,:] # LL polarization
+        ants1 = tb.getcol('ANTENNA1') # Antenna
+        ants2 = tb.getcol('ANTENNA2') # Current reference antenna
+
+        # Create empty lists to be filled
+        updatedgainRR = gainsRR
+        updatedgainLL = gainsLL
+
+        # Create numpy array for easy access (drawback is that all values in
+        # this 2D array are complex numbers now)
+        table = np.column_stack((times, ants1, ants2, gainsRR, gainsLL))
+        updated_table = table
+        for time, ant1, ant2, gRR, gLL in table:
+            if ant1 == ant2:
+                if gRR != (1+0j) or gLL != (1+0j):
+                    # Gains with this timestamp need to be fixed. Find the
+                    # the gains with corresponding times.
+                    for i, [time_2, ant1_2, ant2_2, gRR_2, gLL_2] in enumerate(table):
+                        if time == time_2:
+                            # Check which polarizations need to be fixed
+                            if gRR != (1+0j):
+                                # Fix RR polarization
+                                updated_gRR_2 = gRR_2 * np.conjugate(gRR) / np.absolute(gRR)
+                                updatedgainRR[i] = updated_gRR_2
+                        
+                            if gLL != (1+0j):
+                                # Fix LL polarization
+                                updated_gLL_2 = gLL_2 * np.conjugate(gLL) / np.absolute(gLL)
+                                updatedgainLL[i] = updated_gLL_2
+
+        # Add new data to existing calibration table
+        gains[0,0,:] = updatedgainRR
+        gains[1,0,:] = updatedgainLL
+        tb.putcol('CPARAM', gains)
+        
+        tb.close()
+
+        return caltab
+
+    def resample_solutions(self, interpolationtimes, interp_type = 'spline'):
+        """
+        Calibration tables created by CASA's gaincal can have a smaller number
+        of timestamps than the original measurement set (e.g. if the solution
+        interval was larger than 'int'). This method resamples the calibration
+        table to the original number of timestamps available in the measurement
+        set by interpolation.
+        """
+        
+        # Only use the unique timestamps
+        newtimes = np.sort(np.unique(interpolationtimes))
+
+        # Open the calibration table and fetch needed parameters
+        tb.open(self.file_path, nomodify=False)
+        times = tb.getcol('TIME')
+        gains = tb.getcol('CPARAM')
+        gainsRR = gains[0,0,:] # RR polarization
+        gainsLL = gains[1,0,:] # LL polarization
+        ants1 = tb.getcol('ANTENNA1') # Antenna
+        ants2 = tb.getcol('ANTENNA2') # Current reference antenna
+        flags = tb.getcol('FLAG')
+        flagsRR = flags[0,0,:] # RR polarization
+        flagsLL = flags[1,0,:] # LL polarization
+        tabdesc = tb.getdesc()  
+        dminfo  = tb.getdminfo()
+        tb.close()
+        
+        # Check if all reference antennas are the same
+        uniqueants = np.unique(ants2)
+        if len(uniqueants) > 1:
+            # Multiple reference antennas in calibration table
+            print 'Multiple reference antennas in calibration table'
+            sys.exit()
+        else:
+            refant = uniqueants[0]
+
+        # Separate different antennas: info_per_ant is a list containing
+        # for each antenna a list with the time, gains and flags for both
+        # polarizations
+        uniqueants = np.unique(ants1)
+        info_per_ant = []
+        for unique_ant in uniqueants:
+            this_ants_time = []
+            this_ants_gRR = []
+            this_ants_gLL = []
+            this_ants_fRR = []
+            this_ants_fLL = []
+            for time, gRR, gLL, ant, flagRR, flagLL in zip(times, gainsRR, gainsLL, ants1, flagsRR, flagsLL):
+                if ant == unique_ant:
+                    this_ants_time.append(time)
+                    this_ants_gRR.append(gRR)
+                    this_ants_fRR.append(flagRR)
+                    this_ants_gLL.append(gLL)
+                    this_ants_fLL.append(flagLL)
+            
+            info_per_ant.append([this_ants_time, this_ants_gRR, this_ants_gLL, this_ants_fRR, this_ants_fLL])
+        
+        # For each antenna interpolate the data
+        updated_ant_info = []
+        for ant_info in info_per_ant:
+            ant_time = ant_info[0]
+            ant_gRR = ant_info[1]
+            ant_gLL = ant_info[2]
+            ant_fRR = ant_info[3]
+            ant_fLL = ant_info[4]
+        
+            ant_phase_RR = np.angle(ant_gRR)
+            ant_mag_RR = np.abs(ant_gRR)
+            ant_phase_LL = np.angle(ant_gLL)
+            ant_mag_LL = np.abs(ant_gLL)
+
+            
+            ### REMOVE FLAGGED VALUES ###
+                    
+            # Although if data is flagged, gains are still stored in the table.
+            # This messes up the interpolation so remove these values first.
+            updated_ant_timeRR = []
+            updated_ant_phaseRR = []
+            updated_ant_magRR = []
+            for time, phaseRR, magRR, fRR in zip(ant_time, ant_phase_RR, ant_mag_RR, ant_fRR):
+                if not fRR:
+                    updated_ant_timeRR.append(time)
+                    updated_ant_phaseRR.append(phaseRR)
+                    updated_ant_magRR.append(magRR)
+
+            updated_ant_timeLL = []
+            updated_ant_phaseLL = []
+            updated_ant_magLL = []
+            for time, phaseLL, magLL, fLL in zip(ant_time, ant_phase_LL, ant_mag_LL, ant_fLL):
+                if not fLL:
+                    updated_ant_timeLL.append(time)
+                    updated_ant_phaseLL.append(phaseLL)
+                    updated_ant_magLL.append(magLL)
+
+            ### UNWRAP PHASES ###
+
+            ##### TO DO
+
+
+            ### INTERPOLATE VALUES ###
+            
+            if interp_type == 'spline':
+                # Create the interpolation functions and new values
+                if len(updated_ant_timeRR) > 4:
+                    # Total number of points must be greater than the degree of the
+                    # spline
+                    splineRepPhaseRR = interpolate.splrep(updated_ant_timeRR, updated_ant_phaseRR, s=0)
+                    splineRepMagRR = interpolate.splrep(updated_ant_timeRR, updated_ant_magRR, s=0)
+                    newphasesRR = interpolate.splev(newtimes, splineRepPhaseRR, der=0)
+                    newmagRR = interpolate.splev(newtimes, splineRepMagRR, der=0)
+                else:
+                    # (almost) everything is flagged, so just fill it with dummy
+                    # values
+                    newphasesRR = np.linspace(0,0,len(newtimes))
+                    newmagRR = np.linspace(1,1,len(newtimes))
+                
+                if len(updated_ant_timeLL) > 4:
+                    # Total number of points must be greater than the degree of the
+                    # spline
+                    splineRepPhaseLL = interpolate.splrep(updated_ant_timeLL, updated_ant_phaseLL, s=0)
+                    splineRepMagLL = interpolate.splrep(updated_ant_timeLL, updated_ant_magLL, s=0)
+                    newphasesLL = interpolate.splev(newtimes, splineRepPhaseLL, der=0)
+                    newmagLL = interpolate.splev(newtimes, splineRepMagLL, der=0)
+                else:
+                    # (almost) everything is flagged, so just fill it with dummy
+                    # values
+                    newphasesLL = np.linspace(0,0,len(newtimes))
+                    newmagLL = np.linspace(1,1,len(newtimes))
+
+            elif interp_type == 'linear':
+                # Create the interpolation functions and new values
+                if len(updated_ant_timeRR) > 2:
+                    newphasesRR = np.interp(newtimes, updated_ant_timeRR, updated_ant_phaseRR)
+                    newmagRR = np.interp(newtimes, updated_ant_timeRR, updated_ant_magRR)
+                else:
+                    # (almost) everything is flagged, so just fill it with dummy
+                    # values
+                    newphasesRR = np.linspace(0,0,len(newtimes))
+                    newmagRR = np.linspace(1,1,len(newtimes))
+                
+                if len(updated_ant_timeLL) > 2:
+                    newphasesLL = np.interp(newtimes, updated_ant_timeLL, updated_ant_phaseLL)
+                    newmagLL = np.interp(newtimes, updated_ant_timeLL, updated_ant_magLL)
+                else:
+                    # (almost) everything is flagged, so just fill it with dummy
+                    # values
+                    newphasesLL = np.linspace(0,0,len(newtimes))
+                    newmagLL = np.linspace(1,1,len(newtimes))
+
+            new_ant_gRR = newmagRR * np.exp(1j * newphasesRR)
+            new_ant_gLL = newmagLL * np.exp(1j * newphasesLL)
+
+            
+            ### FIX INTERPOLATION BETWEEN FLAGS ###
+                    
+            # Fix interpolation between flagged values. This comes basically
+            # down to linear interpolation between flag values (zero and one).
+            # Values < 1 will next be regarded as flagged.
+            ant_fRR_num = map(int, ant_fRR)
+            #interpolateFlagFuncRR = interpolate.interp1d(ant_time, ant_fRR_num, bounds_error=False, fill_value="extrapolate")
+            #new_ant_fRR = interpolateFlagFuncRR(newtimes)
+            # I cannot use the above because of an old version of scipy
+            # I asked ICT but they will not upgrade yet, own installation is
+            # tedious
+            new_ant_fRR = np.interp(newtimes, ant_time, ant_fRR_num)
+            new_ant_fRR = np.ceil(new_ant_fRR)
+            new_ant_fRR = map(bool, new_ant_fRR)
+            
+            ant_fLL_num = map(int, ant_fLL)
+            #interpolateFlagFuncLL = interpolate.interp1d(ant_time, ant_fLL_num)
+            #new_ant_fLL = interpolateFlagFuncLL(newtimes)
+            # I cannot use the above because of an old version of scipy
+            # I asked ICT but they will not upgrade yet, own installation is
+            # tedious
+            new_ant_fLL = np.interp(newtimes, ant_time, ant_fLL_num)
+            new_ant_fLL = np.ceil(new_ant_fLL)
+            new_ant_fLL = map(bool, new_ant_fLL)
+
+
+            ### FLAG LARGE GAPS ###
+
+            # Sometimes, for larger gaps, timestamps exist, flags are not
+            # true but data is not available. This means that for the entire
+            # gap the interpolater can do what it wants. So these large gaps
+            # need to be flagged as well.
+            # First RR
+            for i in xrange(len(updated_ant_timeRR)-1):
+                # Find out how many interpolated steps are between two data
+                # points.
+                time = updated_ant_timeRR[i]
+                nexttime = updated_ant_timeRR[i+1]
+                
+                # Since we're dealing with a calibration table with less
+                # timestamps, we need to find the timestamps in the measurement
+                # set which correspond best with those in the cal table.
+                time_matches = []
+                nexttime_matches = []
+                for match in newtimes:
+                    time_matches.append([match-time, match])
+                    nexttime_matches.append([match-nexttime, match])
+                time_matches.sort(key=lambda x: x[0])
+                nexttime_matches.sort(key=lambda x: x[0])
+                best_match_with_time = time_matches[0][1]
+                best_match_with_nexttime = nexttime_matches[0][1]
+                
+                # Calculate how many intermediate steps there are
+                counter = 0
+                start_counter = False
+                for interp_time in newtimes:
+                    if interp_time == best_match_with_time:
+                        start_counter = True
+                    if start_counter:
+                        counter += 1
+                    if interp_time == best_match_with_nexttime:
+                        start_counter = False
+            
+                # If the numbers of steps is too large, flag the gap.
+                expected_steps = int(len(newtimes)/np.float32(len(updated_ant_timeRR)) + 2)
+                if counter > expected_steps:
+                    # Flag this gap
+                    do_flag = False
+                    for i, interp_time in enumerate(newtimes):
+						# Only flag values between the two data steps.
+                        if interp_time == best_match_with_nexttime:
+                            do_flag = False
+                        if do_flag:
+                            new_ant_fRR[i] = True
+                        if interp_time == best_match_with_time:
+                            do_flag = True
+            # Also do LL
+            for i in xrange(len(updated_ant_timeLL)-1):
+                # Find out how many interpolated steps are between two data
+                # points.
+                time = updated_ant_timeLL[i]
+                nexttime = updated_ant_timeLL[i+1]
+                
+                # Since we're dealing with a calibration table with less
+                # timestamps, we need to find the timestamps in the measurement
+                # set which correspond best with those in the cal table.
+                time_matches = []
+                nexttime_matches = []
+                for match in newtimes:
+                    time_matches.append([match-time, match])
+                    nexttime_matches.append([match-nexttime, match])
+                time_matches.sort(key=lambda x: x[0])
+                nexttime_matches.sort(key=lambda x: x[0])
+                best_match_with_time = time_matches[0][1]
+                best_match_with_nexttime = nexttime_matches[0][1]
+                
+                # Calculate how many intermediate steps there are
+                counter = 0
+                start_counter = False
+                for interp_time in newtimes:
+                    if interp_time == best_match_with_time:
+                        start_counter = True
+                    if start_counter:
+                        counter += 1
+                    if interp_time == best_match_with_nexttime:
+                        start_counter = False
+            
+                # If the numbers of steps is too large, flag the gap.
+                expected_steps = int(len(newtimes)/np.float32(len(updated_ant_timeLL)) + 2)
+                if counter > expected_steps:
+                    # Flag this gap
+                    do_flag = False
+                    for i, interp_time in enumerate(newtimes):
+						# Only flag values between the two data steps.
+                        if interp_time == best_match_with_nexttime:
+                            do_flag = False
+                        if do_flag:
+                            new_ant_fLL[i] = True
+                        if interp_time == best_match_with_time:
+                            do_flag = True
+
+
+            ### SET FLAGGED VALUES TO (1+0j) ###
+
+            # This is just the casa convention. Doesn't really matter since
+            # the data is flagged.
+            for i, flag in enumerate(new_ant_fRR):
+                if flag:
+                    new_ant_gRR[i] = (1+0j)
+            for i, flag in enumerate(new_ant_fLL):
+                if flag:
+                    new_ant_gLL[i] = (1+0j)
+
+            # TEST PLOT
+            #updated_ant_times = []
+            #updated_ant_phases = []
+            #for time, gain, flag in zip(newtimes, new_ant_gRR, new_ant_fRR):
+                #if not flag:
+                    #updated_ant_times.append(time)
+                    #updated_ant_phases.append(np.angle(gain))
+
+            #from matplotlib import pyplot as plt
+            
+            #f, axarr = plt.subplots(2, sharex=True)
+            #axarr[0].scatter(newtimes, new_ant_fRR)
+            #axarr[1].scatter(updated_ant_times, updated_ant_phases, c='g')
+            #axarr[1].scatter(updated_ant_timeRR, updated_ant_phaseRR, c='r')
+            #plt.show()
+            # TEST PLOT
+
+            # Store this new interpolation data
+            updated_ant_info.append([newtimes, new_ant_gRR, new_ant_gLL, new_ant_fRR, new_ant_fLL])
+
+        # Put the updated info back in the correct places in a new cal table
+        correct_format_times = []
+        correct_format_antids = []
+        correct_format_antrefids = []
+        correct_format_gRR = []
+        correct_format_gLL = []
+        correct_format_fRR = []
+        correct_format_fLL = []
+        for time in newtimes:
+            for ant_id, updated_info in enumerate(updated_ant_info):
+                ant_id += 1
+                ant_times = updated_info[0]
+                ant_gRR = updated_info[1]
+                ant_gLL = updated_info[2]
+                ant_fRR = updated_info[3]
+                ant_fLL = updated_info[4]
+                for i, ant_time in enumerate(ant_times):
+                    if ant_time == time:
+                        correct_format_times.append(ant_time)
+                        correct_format_antids.append(ant_id)
+                        correct_format_antrefids.append(refant)
+                        correct_format_gRR.append(ant_gRR[i])
+                        correct_format_gLL.append(ant_gLL[i])
+                        correct_format_fRR.append(ant_fRR[i])
+                        correct_format_fLL.append(ant_fLL[i])
+
+        updatedgains = np.zeros([2,1,len(correct_format_gRR)], dtype=np.complex)
+        updatedflags = np.zeros([2,1,len(correct_format_gRR)], dtype=bool)
+        updatedgains[0,0,:] = correct_format_gRR
+        updatedgains[1,0,:] = correct_format_gLL
+        updatedflags[0,0,:] = correct_format_fRR
+        updatedflags[1,0,:] = correct_format_fLL
+
+        syscommand = 'rm -rf '+self.file_path+"_resamp"
+        os.system(syscommand)
+        caltab = self.file_path+"_resamp"
+        
+        tb.create(caltab, tabdesc, dminfo=dminfo)
+        tb.addrows(len(correct_format_times))
+        tb.putkeyword('VisCal', 'G Jones')
+        tb.putcol('TIME', correct_format_times)
+        tb.putcol('CPARAM', updatedgains)
+        tb.putcol('ANTENNA1', correct_format_antids)
+        tb.putcol('ANTENNA2', correct_format_antrefids)
+        tb.putcol('FLAG', updatedflags)
+        tb.close()
+
+        return caltab
+

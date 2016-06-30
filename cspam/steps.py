@@ -70,8 +70,6 @@ clearcal = clearcal.clearcal
 from casat import exportfits
 exportfits = exportfits.exportfits
 
-from casat import clean
-clean = clean.clean
 
 sou_res = ['1arcsec']
 sou_size = [5000]
@@ -87,7 +85,7 @@ def plots(mset):
     """
     logging.info("### CREATING PLOTS")
     plotants(vis=mset.file_path, figfile=mset.dir_plot+'/plotants.png')
-    plotms(vis=mset.file_path, xaxis='time', yaxis='elevation',
+    plotms(vis=mset.file_path, xaxis='time', yaxis='elevation', showgui=False,
            selectdata=True, antenna='0&1;2&3',spw='0:31', coloraxis='field', 
            plotfile=mset.dir_plot+'/el_vs_time.png', overwrite=True)
     listobs(vis=mset.file_path, verbose=True,
@@ -767,13 +765,11 @@ def selfcal(mset):
                 Ga = TableObjects.STObj(mset.dir_cal+target.extend_dir+'/'+target.field_name+str(cycle)+'.Ga')
                 target.self_cal_ga_tables.append(Ga)
                         
-                utils.FlagCal(Ga.file_path,
-                              sigma = 3, cycles = 3)
+                utils.FlagCal(Ga.file_path, sigma = 3, cycles = 3)
      
             # plot gains (amps only in later cycles)
             if cycle >= 3:
-                Gp.plot(mset.dir_plot+target.extend_dir+'/Gp_cycle'+str(cycle), phase_only=True)
-                Ga.plot(mset.dir_plot+target.extend_dir+'/Ga_cycle'+str(cycle), amp_only=True)
+                Gp.plot(mset.dir_plot+target.extend_dir+'/Gp_cycle'+str(cycle))
             else:
                 Gp.plot(mset.dir_plot+target.extend_dir+'/Gp_cycle'+str(cycle), phase_only=True)
 
@@ -874,7 +870,7 @@ def peeling(mset):
                     difference = ((ra-other_ra)**2.0 + (dec-other_dec)**2.0)**.5
                     
                     # I demand more than 2/3 separation in diameter
-                    if difference < (2./3.) * (2*peel_radius_in_arcmin) * 0.01667:
+                    if difference < (2./3.) * (2*peel_radius_in_arcmin) * (1./60):
                         diff_large_enough = False
                 
                 if diff_large_enough:
@@ -885,11 +881,11 @@ def peeling(mset):
         # Sort the peel sources in order of decreasing peak flux to noise ratio
         peelsources.sort(key=lambda x: x[2], reverse=True)        
         # Create an image showing the earlier image with the potential sources to peel
-        fitsfig = aplpy.FITSFigure(path_to_currentimage+'-masked.image.tt0.fits')
-        fitsfig.show_grayscale()
-        fitsfig.show_circles([i[0] for i in peelsources],
-                             [i[1] for i in peelsources], peel_radius_in_arcmin*0.01667, lw=2.5) # 0.01667 degrees is an arcmin
-        fitsfig.save(path_to_currentimage+'-masked.image.tt0.fits.potential_sources.png')
+        #fitsfig = aplpy.FITSFigure(path_to_currentimage+'-masked.image.tt0.fits')
+        #fitsfig.show_grayscale()
+        #fitsfig.show_circles([i[0] for i in peelsources],
+                             #[i[1] for i in peelsources], peel_radius_in_arcmin*(1./60), lw=2.5) # (1./60) degrees is an arcmin
+        #fitsfig.save(path_to_currentimage+'-masked.image.tt0.fits.potential_sources.png')
 
         # Now that we have a list of sources to peel, calculate for each source
         # the solution interval. Determine the solution interval needed to obtain
@@ -916,11 +912,11 @@ def peeling(mset):
                 peelsourcesupdated.append(source)
         
         # Create an image showing the earlier image with the final sources to peel
-        fitsfig = aplpy.FITSFigure(path_to_currentimage+'-masked.image.tt0.fits')
-        fitsfig.show_grayscale()
-        fitsfig.show_circles([i[0] for i in peelsourcesupdated],
-                             [i[1] for i in peelsourcesupdated], peel_radius_in_arcmin*0.01667, lw=2.5) # 0.01667 degrees is an arcmin
-        fitsfig.save(path_to_currentimage+'-masked.image.tt0.fits.final_sources.png')
+        #fitsfig = aplpy.FITSFigure(path_to_currentimage+'-masked.image.tt0.fits')
+        #fitsfig.show_grayscale()
+        #fitsfig.show_circles([i[0] for i in peelsourcesupdated],
+                             #[i[1] for i in peelsourcesupdated], peel_radius_in_arcmin*0.01667, lw=2.5) # 0.01667 degrees is an arcmin
+        #fitsfig.save(path_to_currentimage+'-masked.image.tt0.fits.final_sources.png')
         
         # Create a residual image needed for peeling (i.e.: add peel source to
         # residual image, self calibrate, remove peel source and use updated
@@ -928,26 +924,20 @@ def peeling(mset):
         prepeelingmodels = [path_to_currentimage+'-masked.model.tt0',
                             path_to_currentimage+'-masked.model.tt1']
         peel.subtract(target_mset.file_path, prepeelingmodels, wprojplanes=512)
-        residualMSpath = mset.dir_peel+extend_dir+'/'+target_mset.ms_name+'_residual.ms'
+        residualMSpath = mset.dir_peel+extend_dir+'/pre/'+target_mset.ms_name+'_residual.ms'
         split(vis=target_mset.file_path, outputvis=residualMSpath)
         residualMS = TableObjects.MSObj(residualMSpath)
-        
-        
-        clean(vis=residualMS.file_path, imagename=residualMS.file_path+'_residual', 
-              gridmode='widefield', wprojplanes=512, mode='mfs',
-              niter=5000, gain=0.1, psfmode='clark', imagermode='csclean', 
-              interactive=False, imsize=sou_size, cell=sou_res,
-              stokes='I', nterms=2, weighting='briggs', robust=rob,
-              usescratch=True)
-        exportfits(imagename=residualMS.file_path+'_residual.image.tt0',
-               fitsimage=residualMS.file_path+'_residual.image.tt0.fits',
-               history=False, overwrite=True)
         
         # Peel all sources
         for i, source in enumerate(peelsourcesupdated):
             ra = source[0]
             dec = source[1]
+            rms = source[4]
             solint = source[7]
+            solint_data = {'solint':solint, 'numint':number_of_integrations, 
+                           'minsnr':min_SNR_per_solution_interval,
+                           'ff':fudge_factor, 'inttime':integration_time}
+            
             if not os.path.isdir(mset.dir_peel+extend_dir+'/region'+str(i+1)):
                 os.makedirs(mset.dir_peel+extend_dir+'/region'+str(i+1))
 
@@ -959,11 +949,9 @@ def peeling(mset):
                 dec_string = string_format[1]
                 regionfile.write('#CRTFv0')
                 regionfile.write('\n')
-                regionfile.write('circle[['+ra_string+', '+dec_string+'], 30arcmin]')
+                regionfile.write('circle[['+ra_string+', '+dec_string+'], '+str(peel_radius_in_arcmin)+'arcmin]')
         
-            peel.peel(residualMS, prepeelingmodels, mset.dir_peel+extend_dir+'/region'+str(i+1), solint)
-            
-            sys.exit()
+            residualMS = peel.peel(residualMS, target_mset, prepeelingmodels, mset.dir_peel+extend_dir+'/region'+str(i+1), solint_data, rms)
 
         
 

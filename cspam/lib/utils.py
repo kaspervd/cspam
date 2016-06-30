@@ -272,7 +272,7 @@ def cleanmaskclean(parms, makemask=True):
     hdu.verify('fix')
     hdu.writeto(parms['imagename']+'.newmask.fits', clobber=True)
     
-    # Let's assume no faint mask
+    # Add the mask
     parms['mask']=parms['imagename']+'.newmask'
     parms['imagename']=parms['imagename']+'-masked'
     parms['niter']=parms['niter']/3 # reduce number if clean iterations in masked mode
@@ -321,3 +321,4 @@ def deg2HMS(ra='', dec='', round=True):
         return (RA, DEC)
     else:
         return RA or DEC
+
