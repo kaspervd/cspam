@@ -204,7 +204,7 @@ def peel(residualMS, target_mset, modelimg, current_peel_directory, solint_data,
     
     # Start the selfcalibration
     numberofcycles = 10
-    usedcycles = 0
+    usedcycles = -1
     for i in xrange(numberofcycles):
         # Create new directories
         if not os.path.isdir(current_peel_directory+'/img/cycle'+str(i)):
@@ -217,7 +217,7 @@ def peel(residualMS, target_mset, modelimg, current_peel_directory, solint_data,
                 '/cal/cycle'+str(i)+'.Gp', solint=solint, minsnr=0.01, selectdata = True,
                 uvrange='>50m', refant=refAnt, calmode='p')
         Gp = TableObjects.STObj(current_peel_directory+'/cal/cycle'+str(i)+'.Gp')
-        Gp.plot(current_peel_directory+'/plot/cycle'+str(i)+'', phase_only=True)
+        Gp.plot(current_peel_directory+'/plot/cycle'+str(i), phase_only=True)
 
         applycal(vis=peelMS.file_path, gaintable=Gp.file_path,
                  calwt=False, flagbackup=False)
@@ -245,7 +245,7 @@ def peel(residualMS, target_mset, modelimg, current_peel_directory, solint_data,
         tflux = fit['results']['component0']['flux']['value'][0] # Jy, assume component0 is the brightest
 
         # Do a check and update solint
-        if i < 2 or rms < prev_rms:
+        if rms < 1.1*prev_rms:# or i < 2:
             print '---'
             print '---'
         
@@ -261,9 +261,9 @@ def peel(residualMS, target_mset, modelimg, current_peel_directory, solint_data,
         
             # Set the new model into the MODEL_DATA column (only select region)
             new_model = [current_peel_directory+'/img/cycle'+str(i)+'/im-masked.model.tt0', 
-                             current_peel_directory+'/img/cycle'+str(i)+'/im-masked.image.tt1']
+                             current_peel_directory+'/img/cycle'+str(i)+'/im-masked.model.tt1']
             updated_peel_source_model = extrModel(new_model, region, i+1)
-            ft(vis=peelMS.file_path, model=peel_source_model, nterms=len(peel_source_model),
+            ft(vis=peelMS.file_path, model=updated_peel_source_model, nterms=len(updated_peel_source_model),
                usescratch=True)
 
             usedcycles = i
@@ -276,8 +276,12 @@ def peel(residualMS, target_mset, modelimg, current_peel_directory, solint_data,
     # Now, after enough self-cal cycles, we have a solution table and model for
     # this peel source. Subtract this new model in order to get an updated
     # residual measurement set.
-    best_updated_model = [current_peel_directory+'/img/cycle'+str(usedcycles)+'/im-masked.model.tt0', 
-                          current_peel_directory+'/img/cycle'+str(usedcycles)+'/im-masked.model.tt1']
+    if usedcycles == -1:
+        # No improvent at all
+        best_updated_model = peel_source_model
+    else:
+        best_updated_model = [current_peel_directory+'/img/cycle'+str(usedcycles)+'/im-masked.model.tt0', 
+                              current_peel_directory+'/img/cycle'+str(usedcycles)+'/im-masked.model.tt1']
     delmod(vis=peelMS.file_path)
     subtract(peelMS.file_path, best_updated_model)
     
@@ -287,32 +291,27 @@ def peel(residualMS, target_mset, modelimg, current_peel_directory, solint_data,
     split(peelMS.file_path, updatedResMSfilepath)
     updatedResidualMS = TableObjects.MSObj(updatedResMSfilepath)
     
-    # HERE I SHOULD TAKE CARE OF THE INVERSION-INTERPOLATION PROBLEM
-    ### TEST
-    #ms.open(updatedResidualMS.file_path)
-    #time = ms.getdata('time')
-    #ms.close()
-    #print len(time['time'])
-    #tb.open(updatedResidualMS.file_path)
-    #colnames = tb.colnames()
-    #time = tb.getcol('TIME')
-    #tb.close()
-    #print colnames
-    #print time
-    ### ENDTEST
-    
-    # Apply the inverse phase solutions for this particular peel source
-    Gp = TableObjects.STObj(current_peel_directory+'/cal/cycle'+str(usedcycles)+'.Gp')
-    Gp_inv_path = Gp.create_inverted_table()
-    applycal(vis=updatedResidualMS.file_path, gaintable=Gp_inv_path, calwt=False, 
-             flagbackup=False)
+    if not usedcycles == -1:
+        # Apply the inverse phase solutions for this particular peel source
+        allTimestamps = updatedResidualMS.get_all_available_timestamps()
+        Gp = TableObjects.STObj(current_peel_directory+'/cal/cycle'+str(usedcycles)+'.Gp')
+        print '-- refant --'
+        print refAnt
+        Gp_reref_path = Gp.re_reference_table(refant=1)
+        Gp_reref = TableObjects.STObj(Gp_reref_path)
+        Gp_normref_path = Gp_reref.normalize_reference_antenna()
+        Gp_normref = TableObjects.STObj(Gp_normref_path)
+        Gp_resamp_path = Gp_normref.resample_solutions(allTimestamps, interp_type = 'linear')
+        Gp_resamp = TableObjects.STObj(Gp_resamp_path)
+        Gp_resamp.plot(current_peel_directory+'/plot/cycle'+str(usedcycles)+'/resamp', phase_only=True)
+        Gp_inv_path = Gp_resamp.invert_table()
+        applycal(vis=updatedResidualMS.file_path, gaintable=Gp_inv_path, calwt=False, 
+                 flagbackup=False)
 
     # Set the phase center again to the initial position
     oldtime = time.time()
-    print 'starts fixvis'
     fixvis(vis=updatedResidualMS.file_path, outputvis=updatedResidualMS.file_path,
            phasecenter = orig_center_string)
-    print 'fixvis ended, took in total:', time.time() - oldtime
     
     # CHECK IF EVERYTHING WORKS
     parms = {'vis':updatedResidualMS.file_path, 'imagename':current_peel_directory+'/updated_res',
@@ -327,6 +326,12 @@ def peel(residualMS, target_mset, modelimg, current_peel_directory, solint_data,
                history=False, overwrite=True)
                
     residualrms = imstat(imagename=current_peel_directory+'/updated_res.image.tt0')['rms'][0]
+    print '--'
+    print '--'
+    print '--'
     print 'residual rms: ', residualrms
+    print '--'
+    print '--'
+    print '--'
     
     return updatedResidualMS

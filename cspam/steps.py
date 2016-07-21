@@ -824,7 +824,7 @@ def peeling(mset):
                  'imagermode':'csclean', 'imsize':sou_size, 'cell':sou_res, 
                  'weighting':'briggs', 'robust':rob, 'usescratch':True,
                  'uvtaper':True, 'threshold':str(expnoise)+' Jy'}
-        #utils.cleanmaskclean(parms)
+        utils.cleanmaskclean(parms)
         
         # Obtain a list of source in this image
         # execute this in another python session since importing casac in 
@@ -832,7 +832,7 @@ def peeling(mset):
         syscommand = 'lib/find_sources.py '+path_to_currentimage+'-masked.image.tt0'+\
                      ' -c '+mset.dir_peel+extend_dir+\
                      '/list_of_sources.fits --atrous_do'
-        #os.system(syscommand)
+        os.system(syscommand)
         
         peelcatalog = fits.open(mset.dir_peel+extend_dir+\
                                 '/list_of_sources.fits')
@@ -881,11 +881,11 @@ def peeling(mset):
         # Sort the peel sources in order of decreasing peak flux to noise ratio
         peelsources.sort(key=lambda x: x[2], reverse=True)        
         # Create an image showing the earlier image with the potential sources to peel
-        #fitsfig = aplpy.FITSFigure(path_to_currentimage+'-masked.image.tt0.fits')
-        #fitsfig.show_grayscale()
-        #fitsfig.show_circles([i[0] for i in peelsources],
-                             #[i[1] for i in peelsources], peel_radius_in_arcmin*(1./60), lw=2.5) # (1./60) degrees is an arcmin
-        #fitsfig.save(path_to_currentimage+'-masked.image.tt0.fits.potential_sources.png')
+        fitsfig = aplpy.FITSFigure(path_to_currentimage+'-masked.image.tt0.fits')
+        fitsfig.show_grayscale()
+        fitsfig.show_circles([i[0] for i in peelsources],
+                             [i[1] for i in peelsources], peel_radius_in_arcmin*(1./60), lw=2.5) # (1./60) degrees is an arcmin
+        fitsfig.save(path_to_currentimage+'-masked.image.tt0.fits.potential_sources.png')
 
         # Now that we have a list of sources to peel, calculate for each source
         # the solution interval. Determine the solution interval needed to obtain
@@ -912,11 +912,11 @@ def peeling(mset):
                 peelsourcesupdated.append(source)
         
         # Create an image showing the earlier image with the final sources to peel
-        #fitsfig = aplpy.FITSFigure(path_to_currentimage+'-masked.image.tt0.fits')
-        #fitsfig.show_grayscale()
-        #fitsfig.show_circles([i[0] for i in peelsourcesupdated],
-                             #[i[1] for i in peelsourcesupdated], peel_radius_in_arcmin*0.01667, lw=2.5) # 0.01667 degrees is an arcmin
-        #fitsfig.save(path_to_currentimage+'-masked.image.tt0.fits.final_sources.png')
+        fitsfig = aplpy.FITSFigure(path_to_currentimage+'-masked.image.tt0.fits')
+        fitsfig.show_grayscale()
+        fitsfig.show_circles([i[0] for i in peelsourcesupdated],
+                             [i[1] for i in peelsourcesupdated], peel_radius_in_arcmin*0.01667, lw=2.5) # 0.01667 degrees is an arcmin
+        fitsfig.save(path_to_currentimage+'-masked.image.tt0.fits.final_sources.png')
         
         # Create a residual image needed for peeling (i.e.: add peel source to
         # residual image, self calibrate, remove peel source and use updated
@@ -927,6 +927,20 @@ def peeling(mset):
         residualMSpath = mset.dir_peel+extend_dir+'/pre/'+target_mset.ms_name+'_residual.ms'
         split(vis=target_mset.file_path, outputvis=residualMSpath)
         residualMS = TableObjects.MSObj(residualMSpath)
+        
+
+        # CHECK IF EVERYTHING WORKS
+        parms = {'vis':residualMS.file_path, 'imagename':mset.dir_peel+extend_dir+'/pre/'+target_mset.ms_name+'_orig_residual',
+                 'gridmode':'widefield', 'wprojplanes':512, 'mode':'mfs', 
+                 'nterms':2, 'niter':10000, 'gain':0.1, 'psfmode':'clark', 
+                 'imagermode':'csclean', 'imsize':sou_size, 'cell':sou_res, 
+                 'weighting':'briggs', 'robust':rob, 'usescratch':True, 
+                 'mask':''}
+        utils.cleanmaskclean(parms, makemask = False)
+        exportfits(imagename=mset.dir_peel+extend_dir+'/pre/'+target_mset.ms_name+'_orig_residual.image.tt0',
+                   fitsimage=mset.dir_peel+extend_dir+'/pre/'+target_mset.ms_name+'_orig_residual.image.tt0.fits',
+                   history=False, overwrite=True)
+        
         
         # Peel all sources
         for i, source in enumerate(peelsourcesupdated):

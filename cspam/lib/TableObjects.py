@@ -633,20 +633,20 @@ class STObj:
                         iteration='antenna',plotrange=[0,0,-phaseplotmax,phaseplotmax],showflags=False,\
                         plotsymbol='o',plotcolor='blue',markersize=5.0,fontsize=10.0,showgui=False,figfile=filename)
 
-	def create_inverted_table(self):
-		"""
-		Invert a calibration table and return the new calibration table path
-		"""
-		syscommand = "cp -r "+self.file_path+" "+self.file_path+"_inv"
-		os.system(syscommand)
-		caltab = self.file_path+"_inv"
-		tb.open(caltab, nomodify=False) # open the caltable
-		gVals = tb.getcol('CPARAM')#, startrow=start, nrow=incr) # get the values from the GAIN column
-		mask = abs(gVals) > 0.0 # only consider non-zero values
-		gVals[mask] = 1.0 / gVals[mask] # do the inversion
-		tb.putcol('CPARAM', gVals)#, startrow=start, nrow=incr) # replace the GAIN values with the inverted values
-		tb.close() # close the table
-		return caltab
+    def invert_table(self):
+        """
+        Invert a calibration table and return the new calibration table path
+        """
+        syscommand = "cp -r "+self.file_path+" "+self.file_path+"_inv"
+        os.system(syscommand)
+        caltab = self.file_path+"_inv"
+        tb.open(caltab, nomodify=False) # open the caltable
+        gVals = tb.getcol('CPARAM')#, startrow=start, nrow=incr) # get the values from the GAIN column
+        mask = abs(gVals) > 0.0 # only consider non-zero values
+        gVals[mask] = 1.0 / gVals[mask] # do the inversion
+        tb.putcol('CPARAM', gVals)#, startrow=start, nrow=incr) # replace the GAIN values with the inverted values
+        tb.close() # close the table
+        return caltab
 
     def re_reference_table(self, refant=1):
         """
@@ -746,12 +746,11 @@ class STObj:
         # Add new data to existing calibration table
         gains[0,0,:] = updatedgainRR
         gains[1,0,:] = updatedgainLL
-        ants2 = updatedRefant
         flags[0,0,:] = updatedflagRR
         flags[1,0,:] = updatedflagLL
 
         tb.putcol('CPARAM', gains)
-        tb.putcol('ANTENNA2', ants2)
+        tb.putcol('ANTENNA2', updatedRefant)
         tb.putcol('FLAG', flags)
 
         tb.close()
@@ -827,13 +826,44 @@ class STObj:
         interval was larger than 'int'). This method resamples the calibration
         table to the original number of timestamps available in the measurement
         set by interpolation.
+        
+        Note that the calibration table created by this functions does not have
+        correct data in the following columns: FIELD_ID, INTERVAL, 
+        OBSERVATION_ID, PARAMERR, SCAN_NUMBER, SNR, SPECTRAL_WINDOW_ID (these
+        data are simply not interpolated). So that means that using these
+        columns in applycal is not possible.
         """
         
         # Only use the unique timestamps
         newtimes = np.sort(np.unique(interpolationtimes))
 
+        # Create a copy of the calibration table
+        syscommand = 'rm -rf '+self.file_path+'_resamp'
+        os.system(syscommand)
+        syscommand = "cp -rf "+self.file_path+" "+self.file_path+"_resamp"
+        os.system(syscommand)
+        caltab = self.file_path+'_resamp'
+
         # Open the calibration table and fetch needed parameters
         tb.open(self.file_path, nomodify=False)
+        
+        tbkeyw = tb.getkeywords()
+        tbcoltime = tb.getcolkeywords('TIME')
+        tbcolant1 = tb.getcolkeywords('ANTENNA1')
+        tbcolant2 = tb.getcolkeywords('ANTENNA2')
+        tbcolcpar = tb.getcolkeywords('CPARAM')
+        tbcolflag = tb.getcolkeywords('FLAG')
+        
+        tbcolfieldid = tb.getcolkeywords('FIELD_ID')
+        tbcolint = tb.getcolkeywords('INTERVAL')
+        tbcolobsid = tb.getcolkeywords('OBSERVATION_ID')
+        tbcolpar = tb.getcolkeywords('PARAMERR')
+        tbcolscann = tb.getcolkeywords('SCAN_NUMBER')
+        tbcolsnr = tb.getcolkeywords('SNR')
+        tbcolspwid = tb.getcolkeywords('SPECTRAL_WINDOW_ID')
+        tbcolwei = tb.getcolkeywords('WEIGHT')
+        
+        tbinfo = tb.info()
         times = tb.getcol('TIME')
         gains = tb.getcol('CPARAM')
         gainsRR = gains[0,0,:] # RR polarization
@@ -845,6 +875,7 @@ class STObj:
         flagsLL = flags[1,0,:] # LL polarization
         tabdesc = tb.getdesc()  
         dminfo  = tb.getdminfo()
+                
         tb.close()
         
         # Check if all reference antennas are the same
@@ -979,21 +1010,11 @@ class STObj:
             # down to linear interpolation between flag values (zero and one).
             # Values < 1 will next be regarded as flagged.
             ant_fRR_num = map(int, ant_fRR)
-            #interpolateFlagFuncRR = interpolate.interp1d(ant_time, ant_fRR_num, bounds_error=False, fill_value="extrapolate")
-            #new_ant_fRR = interpolateFlagFuncRR(newtimes)
-            # I cannot use the above because of an old version of scipy
-            # I asked ICT but they will not upgrade yet, own installation is
-            # tedious
             new_ant_fRR = np.interp(newtimes, ant_time, ant_fRR_num)
             new_ant_fRR = np.ceil(new_ant_fRR)
             new_ant_fRR = map(bool, new_ant_fRR)
             
             ant_fLL_num = map(int, ant_fLL)
-            #interpolateFlagFuncLL = interpolate.interp1d(ant_time, ant_fLL_num)
-            #new_ant_fLL = interpolateFlagFuncLL(newtimes)
-            # I cannot use the above because of an old version of scipy
-            # I asked ICT but they will not upgrade yet, own installation is
-            # tedious
             new_ant_fLL = np.interp(newtimes, ant_time, ant_fLL_num)
             new_ant_fLL = np.ceil(new_ant_fLL)
             new_ant_fLL = map(bool, new_ant_fLL)
@@ -1106,23 +1127,6 @@ class STObj:
                 if flag:
                     new_ant_gLL[i] = (1+0j)
 
-            # TEST PLOT
-            #updated_ant_times = []
-            #updated_ant_phases = []
-            #for time, gain, flag in zip(newtimes, new_ant_gRR, new_ant_fRR):
-                #if not flag:
-                    #updated_ant_times.append(time)
-                    #updated_ant_phases.append(np.angle(gain))
-
-            #from matplotlib import pyplot as plt
-            
-            #f, axarr = plt.subplots(2, sharex=True)
-            #axarr[0].scatter(newtimes, new_ant_fRR)
-            #axarr[1].scatter(updated_ant_times, updated_ant_phases, c='g')
-            #axarr[1].scatter(updated_ant_timeRR, updated_ant_phaseRR, c='r')
-            #plt.show()
-            # TEST PLOT
-
             # Store this new interpolation data
             updated_ant_info.append([newtimes, new_ant_gRR, new_ant_gLL, new_ant_fRR, new_ant_fLL])
 
@@ -1136,7 +1140,6 @@ class STObj:
         correct_format_fLL = []
         for time in newtimes:
             for ant_id, updated_info in enumerate(updated_ant_info):
-                ant_id += 1
                 ant_times = updated_info[0]
                 ant_gRR = updated_info[1]
                 ant_gLL = updated_info[2]
@@ -1158,20 +1161,44 @@ class STObj:
         updatedgains[1,0,:] = correct_format_gLL
         updatedflags[0,0,:] = correct_format_fRR
         updatedflags[1,0,:] = correct_format_fLL
-
-        syscommand = 'rm -rf '+self.file_path+"_resamp"
-        os.system(syscommand)
-        caltab = self.file_path+"_resamp"
         
+        # Copy existing table information
         tb.create(caltab, tabdesc, dminfo=dminfo)
         tb.addrows(len(correct_format_times))
-        tb.putkeyword('VisCal', 'G Jones')
+        tb.putinfo(tbinfo)
+        tb.putkeywords(tbkeyw)
+        tb.putcolkeywords('TIME', tbcoltime)
+        tb.putcolkeywords('ANTENNA1', tbcolant1)
+        tb.putcolkeywords('ANTENNA2', tbcolant2)
+        tb.putcolkeywords('CPARAM', tbcolcpar)
+        tb.putcolkeywords('FLAG', tbcolflag)
+        tb.putcolkeywords('FIELD_ID', tbcolfieldid)
+        tb.putcolkeywords('INTERVAL', tbcolint)
+        tb.putcolkeywords('OBSERVATION_ID', tbcolobsid)
+        tb.putcolkeywords('PARAMERR', tbcolpar)
+        tb.putcolkeywords('SCAN_NUMBER', tbcolscann)
+        tb.putcolkeywords('SNR', tbcolsnr)
+        tb.putcolkeywords('SPECTRAL_WINDOW_ID', tbcolspwid)
+        tb.putcolkeywords('WEIGHT', tbcolwei)
+        
+        # Useful stuff
         tb.putcol('TIME', correct_format_times)
         tb.putcol('CPARAM', updatedgains)
         tb.putcol('ANTENNA1', correct_format_antids)
         tb.putcol('ANTENNA2', correct_format_antrefids)
         tb.putcol('FLAG', updatedflags)
+        
+        # Needed but not useful
+        emptylist = np.linspace(0,0,len(correct_format_times))
+        secondemptylist = np.zeros_like(updatedgains, dtype=np.float)
+        tb.putcol('FIELD_ID', emptylist)
+        tb.putcol('INTERVAL', emptylist)
+        tb.putcol('OBSERVATION_ID', emptylist)
+        tb.putcol('PARAMERR', secondemptylist) # different format
+        tb.putcol('SCAN_NUMBER', emptylist)
+        tb.putcol('SNR', secondemptylist) # different format
+        tb.putcol('SPECTRAL_WINDOW_ID', emptylist)
+        # The WEIGHT COLUMN WAS EMPTY SO LEAVE IT EMPTY
         tb.close()
 
         return caltab
-
