@@ -520,7 +520,7 @@ class STObj:
                 antPlot=str(ii*3)+'~'+str(ii*3+2)
                 plotcal(caltable=self.file_path,xaxis='time',yaxis='delay',antenna=antPlot,subplot=311,\
                         overplot=False,clearpanel='All',iteration='antenna',plotrange=[],\
-                        plotsymbol='o-',markersize=5.0,fontsize=8.0,showgui=False,\
+                        plotsymbol='o-',markersize=5.0,fontsize=10.0,showgui=False,\
                         figfile=filename)
                     
         if self.st_type == 'G Jones':
@@ -557,7 +557,7 @@ class STObj:
                     else: plotsymbol = 'o-'
                     plotcal(caltable=self.file_path,xaxis=xaxis,yaxis='amp',antenna=antPlot,subplot=311,\
                             iteration='antenna',plotrange=[0,0,0,plotmax],plotsymbol=plotsymbol,plotcolor='red',\
-                            markersize=5.0,fontsize=8.0,showgui=False,figfile=filename,clearpanel='All')
+                            markersize=5.0,fontsize=10.0,showgui=False,figfile=filename,clearpanel='All')
             # Plot phase
             if not amp_only:
                 for ii in range(nplots):
@@ -569,8 +569,8 @@ class STObj:
                     if BL: xaxis = 'antenna2'
                     else: xaxis = 'time'
                     plotcal(caltable=self.file_path,xaxis=xaxis,yaxis='phase',antenna=antPlot,subplot=311,\
-                            overplot=False,clearpanel='All',iteration='antenna',plotrange=[0,0,-180,180],\
-                            plotsymbol='o-',plotcolor='blue',markersize=5.0,fontsize=8.0,showgui=False,\
+                            iteration='antenna',plotrange=[0,0,-180,180],showflags=False,\
+                            plotsymbol='o-',plotcolor='blue',markersize=5.0,fontsize=10.0,showgui=False,\
                             figfile=filename)
 
         if self.st_type == 'B Jones':
@@ -947,7 +947,8 @@ class STObj:
 
             ### UNWRAP PHASES ###
 
-            ##### TO DO
+            updated_ant_phaseRR = np.unwrap(updated_ant_phaseRR)
+            updated_ant_phaseLL = np.unwrap(updated_ant_phaseLL)
 
 
             ### INTERPOLATE VALUES ###

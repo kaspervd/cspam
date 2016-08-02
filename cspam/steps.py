@@ -97,29 +97,6 @@ def preflag(mset):
     """
     logging.info("### FIRST FLAGGING")
     
-    if mset.nchan == 512:
-        spw='0:0'
-        if mset.freq > 200e6 and mset.freq < 300e6:
-            spw='0:0~130' # 235 MHz +20 border
-    elif mset.nchan == 256:
-        spw='0:0'
-        if mset.freq > 200e6 and mset.freq < 300e6:
-            spw='0:0~65' # 235 MHz +20 border
-    elif mset.nchan == 128:
-        spw='0:0'
-        if mset.freq > 200e6 and mset.freq < 300e6:
-            spw='0:0~65' # 235 MHz +20 border
-    elif mset.nchan == 64:
-        spw='0:0'
-        if mset.freq > 200e6 and mset.freq < 300e6:
-            spw='0:0~32' # 235 MHz +20 border
-    
-    else:
-        logging.error('Cannot understand obs type.')
-        sys.exit(1)
-
-    flagdata(vis=mset.file_path, mode='manualflag', spw=spw, flagbackup=False)
-    
     # quack: flag the quackinterval (in seconds) at the beginning of each scan
     flagdata(vis=mset.file_path, mode='quack', quackinterval=1,
              quackmode='beg', action='apply', flagbackup=False)
@@ -163,7 +140,35 @@ def bandpass_calibration(mset):
         os.makedirs(mset.dir_cal+mset.fluxcalibrator.extend_dir)
     if not os.path.isdir(mset.dir_plot+mset.fluxcalibrator.extend_dir):
         os.makedirs(mset.dir_plot+mset.fluxcalibrator.extend_dir)
-        
+
+
+    # TEMP
+    # make a test img
+    #if not os.path.isdir(mset.dir_img+mset.fluxcalibrator.extend_dir):
+        #os.makedirs(mset.dir_img+mset.fluxcalibrator.extend_dir)
+    #parms = {'vis':mset.file_path, 'field':mset.fluxcalibrator.field_name,
+             #'imagename':mset.dir_img+mset.fluxcalibrator.extend_dir+'/'+ \
+             #mset.fluxcalibrator.field_name+'_before_calibration',
+             #'gridmode':'widefield', 'wprojplanes':128,
+             #'mode':'mfs', 'nterms':2, 'niter':10000, 'gain':0.1,
+             #'psfmode':'clark', 'imagermode':'csclean', 'imsize':1200,
+             #'cell':sou_res, 'weighting':'briggs', 'robust':0,
+             #'usescratch':False}
+    #utils.cleanmaskclean(parms, makemask=False)
+    
+    #parms = {'vis':mset.file_path, 'field':mset.targetsources[0].field_name,
+             #'imagename':mset.dir_img+mset.fluxcalibrator.extend_dir+'/'+ \
+             #mset.targetsources[0].field_name+'_before_calibration',
+             #'gridmode':'widefield', 'wprojplanes':128,
+             #'mode':'mfs', 'nterms':2, 'niter':10000, 'gain':0.1,
+             #'psfmode':'clark', 'imagermode':'csclean', 'imsize':5000,
+             #'cell':sou_res, 'weighting':'briggs', 'robust':0,
+             #'usescratch':False}
+    #utils.cleanmaskclean(parms, makemask=False)
+    # TEMP
+
+
+
     # In order for plotcal to work a symbolic link is needed.
     # Plotcal assumes the measurement set is in the same directory
     # as the cal table.
@@ -485,8 +490,8 @@ def calib(mset):
              'imagename':mset.dir_img+mset.phasecalibrator.extend_dir+'/'+ \
              mset.phasecalibrator.field_name+'_gcal',
              'gridmode':'widefield', 'wprojplanes':128,
-             'mode':'mfs', 'nterms':2, 'niter':1000, 'gain':0.1,
-             'psfmode':'clark', 'imagermode':'csclean', 'imsize':512,
+             'mode':'mfs', 'nterms':2, 'niter':10000, 'gain':0.1,
+             'psfmode':'clark', 'imagermode':'csclean', 'imsize':1200,
              'cell':sou_res, 'weighting':'briggs', 'robust':0,
              'usescratch':False}
     utils.cleanmaskclean(parms, makemask=False)
@@ -499,6 +504,20 @@ def calib(mset):
         applycal(vis=mset.file_path, field=target.field_name, scan=target.scans,
                  gaintable=gaintables, interp=interp, calwt=False,
                  flagbackup=False)
+                 
+    #TEMP
+    #TEMP
+    parms = {'vis':mset.file_path, 'field':mset.targetsources[0].field_name,
+             'imagename':mset.dir_img+mset.phasecalibrator.extend_dir+'/'+ \
+             mset.targetsources[0].field_name+'_gcal',
+             'gridmode':'widefield', 'wprojplanes':128,
+             'mode':'mfs', 'nterms':2, 'niter':10000, 'gain':0.1,
+             'psfmode':'clark', 'imagermode':'csclean', 'imsize':5000,
+             'cell':sou_res, 'weighting':'briggs', 'robust':0,
+             'usescratch':False}
+    utils.cleanmaskclean(parms, makemask=False)
+    # ENDTEMP
+    # ENDTEMP
 
 def selfcal(mset):
     """

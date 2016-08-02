@@ -99,27 +99,27 @@ if __name__ == "__main__":
         # Execute the wanted steps
         if 'plots' in conf['steps']:
             print 'Step: plots'
-            #steps.plots(mset)
+            steps.plots(mset)
 
         if 'preflag' in conf['steps']:
             print 'Step: preflag'
-            #steps.preflag(mset)
+            steps.preflag(mset)
 
         if 'setjy' in conf['steps']:
             print 'Step: setjy'
-            #steps.set_flux_density_scale(mset)
+            steps.set_flux_density_scale(mset)
 
         if 'bandpass' in conf['steps']:
             print 'Step: bandpass'
-            #steps.bandpass_calibration(mset)
+            steps.bandpass_calibration(mset)
 
         if 'cal' in conf['steps']:
             print 'Step: cal'
-            #steps.calib(mset)
+            steps.calib(mset)
 
         if 'selfcal' in conf['steps']:
             print 'Step: selfcal'
-            #steps.selfcal(mset)
+            steps.selfcal(mset)
 
         if 'peeling' in conf['steps']:
             print 'Step: peeling'
@@ -127,6 +127,6 @@ if __name__ == "__main__":
 
         if 'createimage' in conf['steps']:
             print 'Step: createimage'
-            #steps.createimage(mset)
+            steps.createimage(mset)
 
 
