@@ -568,8 +568,11 @@ def selfcal(mset):
                      mset.ms_name+'_target_'+target.field_name+'.ms'
         os.system(syscommand)
     
+        # Store RMS noise per self cal cycle
+        rmslist = []
+    
         # Perform several self calibration cycles.
-        for cycle in xrange(6):
+        for cycle in xrange(20):
      
             logging.info("Start SELFCAL cycle: "+str(cycle))
             
@@ -610,9 +613,15 @@ def selfcal(mset):
                          +target.field_name+str(cycle)+'/im-masked.image.tt0',
                          mask=mask)['rms'][0]
                          
+            # Store RMS noise per self cal cycle
+            rmslist.append(rms)
+                         
             # If there was a previous cycle, check if there is improvement,
             # otherwise quit the self calibration.
-            if cycle != 0 and old_rms * 1.1 < rms:
+            # improvement is defined as: old_rms * fudge factor < rms
+            # a fudge factor is implemented to allow for initial settling down
+            compare_rsm_fudge_factor = 1.1
+            if cycle != 0 and old_rms * compare_rsm_fudge_factor < rms:
                 logging.warning('Image rms noise ('+str(rms)+' Jy/b) is higher \
                 than previous cycle ('+str(old_rms)+' Jy/b). Apply old cal \
                 tables and quitting selfcal.')
@@ -806,6 +815,16 @@ def selfcal(mset):
                             
             # For the next cycle, the current rms becomes the old_rms
             old_rms = rms
+            
+        # Make a plot of the RMS noises per cycle
+        rmslist = np.array(rmslist)
+        normrms = rmslist/rmslist[0]
+        plt.plot(normrms)
+        #plt.ylim((0.85,1.15))
+        #plt.axhline(1.1, color='k', ls='--')
+        plt.xlabel('Self Calibration Cycle')
+        plt.ylabel(r'RMS / RMS$_0$')
+        plt.savefig(mset.dir_plot+'/selfcal_rms.png')
 
 def peeling(mset):
 

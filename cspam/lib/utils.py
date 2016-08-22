@@ -262,7 +262,7 @@ def cleanmaskclean(parms, makemask=True):
     libdirectory = os.path.dirname(os.path.realpath(__file__))
     # execute this in another python session since importing casac in casanova
     # messes up pybdsm
-    os.system(libdirectory+'/make_mask.py '+img+' -m'+parms['imagename']+'.newmask --threshpix=6 --threshisl=3')# --atrous_do')
+    os.system(libdirectory+'/make_mask.py '+img+' -m'+parms['imagename']+'.newmask --threshpix=6 --threshisl=3', '--atrous_do')
 
     # Create fits file (for easy inspection)
     exportfits(imagename=parms['imagename']+'.newmask',fitsimage=parms['imagename']+'.newmask.fits',history=False, overwrite=True)

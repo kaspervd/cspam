@@ -2,8 +2,6 @@ import os
 import numpy as np
 import sys
 
-import time
-
 # CSPAM Modules
 import utils
 import AntennaObjects
@@ -309,7 +307,6 @@ def peel(residualMS, target_mset, modelimg, current_peel_directory, solint_data,
                  flagbackup=False)
 
     # Set the phase center again to the initial position
-    oldtime = time.time()
     fixvis(vis=updatedResidualMS.file_path, outputvis=updatedResidualMS.file_path,
            phasecenter = orig_center_string)
     
